@@ -48,3 +48,11 @@ target/
 # OS
 .DS_Store
 Thumbs.db
+
+# Backend generated files
+Backend/.gradle/
+Backend/build/
+Backend/bin/
+
+# Backend uploaded files
+Backend/uploads/
