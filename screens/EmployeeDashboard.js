@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -38,11 +38,6 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
   const [updateData, setUpdateData] = useState(null);
   const [groupedPlants, setGroupedPlants] = useState([]);
   const [showNotificationDropdown, setShowNotificationDropdown] = useState(false);
-  const [showStatusModal, setShowStatusModal] = useState(false);
-  const [notifications, setNotifications] = useState([]);
-  const [newServiceIds, setNewServiceIds] = useState(new Set());
-  const [newPlantNames, setNewPlantNames] = useState(new Set());
-  const previousServicesRef = useRef([]);
   const [expandedPlants, setExpandedPlants] = useState({});
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
   const [selectedDate, setSelectedDate] = useState('');
@@ -97,69 +92,10 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
     try {
       const response = await axios.get(`${API_BASE}/dashboard/${employeeId}`);
       if (response.data && response.data.complaints) {
-        const newServices = response.data.complaints;
-        const oldServices = previousServicesRef.current;
+        const services = response.data.complaints;
+        setServiceRequests(services);
         
-        if (oldServices.length === 0) {
-          previousServicesRef.current = JSON.parse(JSON.stringify(newServices));
-          setServiceRequests(newServices);
-          const uniquePlants = [...new Set(newServices.map(s => s.plant).filter(Boolean))];
-          setAllPlantNames(uniquePlants);
-          return;
-        }
-        
-        let hasNewService = false;
-        const newServiceList = [];
-        const newPlantSet = new Set();
-        
-        const oldServiceIds = new Set(oldServices.map(s => s.id));
-        for (const newService of newServices) {
-          if (!oldServiceIds.has(newService.id)) {
-            hasNewService = true;
-            newServiceList.push(newService);
-            newPlantSet.add(newService.plant);
-            
-            setNotifications(prev => [{
-              id: `service_${newService.id}_${Date.now()}`,
-              message: `✨ New service SR-${newService.id} assigned at ${newService.plant}`,
-              read: false,
-              timestamp: new Date().toISOString()
-            }, ...prev]);
-          }
-        }
-        
-        if (hasNewService) {
-          setNewServiceIds(prev => {
-            const updated = new Set(prev);
-            newServiceList.forEach(s => updated.add(s.id));
-            return updated;
-          });
-          setNewPlantNames(prev => {
-            const updated = new Set(prev);
-            newPlantSet.forEach(plant => updated.add(plant));
-            return updated;
-          });
-          setShowNotificationDropdown(true);
-          setTimeout(() => setShowNotificationDropdown(false), 5000);
-          
-          setTimeout(() => {
-            setNewServiceIds(prev => {
-              const updated = new Set(prev);
-              newServiceList.forEach(s => updated.delete(s.id));
-              return updated;
-            });
-            setNewPlantNames(prev => {
-              const updated = new Set(prev);
-              newPlantSet.forEach(plant => updated.delete(plant));
-              return updated;
-            });
-          }, 30000);
-        }
-        
-        setServiceRequests(newServices);
-        previousServicesRef.current = JSON.parse(JSON.stringify(newServices));
-        
-        const uniquePlants = [...new Set(newServices.map(s => s.plant).filter(Boolean))];
+        const uniquePlants = [...new Set(services.map(service => service.plant).filter(Boolean))];
         setAllPlantNames(uniquePlants);
       }
     } catch (error) {
@@ -178,17 +114,11 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
           return new Date(dateB) - new Date(dateA);
         });
         setServiceRequests(sorted);
-        previousServicesRef.current = JSON.parse(JSON.stringify(sorted));
         
         const uniquePlants = [...new Set(sorted.map(s => s.plant).filter(Boolean))];
         setAllPlantNames(uniquePlants);
-        
-        setNewServiceIds(new Set());
-        setNewPlantNames(new Set());
-        setNotifications([]);
       } else {
         setServiceRequests([]);
-        previousServicesRef.current = [];
       }
     } catch (error) {
       console.error('Error:', error);
@@ -353,7 +283,6 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    previousServicesRef.current = [];
     loadEmployeeData().finally(() => setRefreshing(false));
   }, []);
 
@@ -404,19 +333,6 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
     return { all, assigned, pending, completed };
   };
 
-  const getStatusCountsWithColors = () => {
-    let assigned = 0, pending = 0, completed = 0;
-    serviceRequests.forEach(req => {
-      const equipmentList = req.equipmentList || [];
-      const totalEquipment = equipmentList.length;
-      const completedEquipment = equipmentList.filter(eq => eq.status === 'C').length;
-      if (totalEquipment > 0 && completedEquipment === 0) assigned++;
-      else if (totalEquipment > 0 && completedEquipment > 0 && completedEquipment < totalEquipment) pending++;
-      else if (totalEquipment > 0 && completedEquipment === totalEquipment) completed++;
-    });
-    return { assigned, pending, completed, total: serviceRequests.length };
-  };
-
   const onDateChange = (event, selectedDate) => {
     setShowDatePicker(false);
     if (selectedDate) {
@@ -451,21 +367,6 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
     return filters.join(' • ');
   };
 
-  const markNotificationAsRead = (id) => {
-    setNotifications(prev => 
-      prev.map(notif => 
-        notif.id === id ? { ...notif, read: true } : notif
-      )
-    );
-  };
-
-  const clearAllNotifications = () => {
-    setNotifications([]);
-    setShowNotificationDropdown(false);
-  };
-
-  const unreadCount = notifications.filter(n => !n.read).length;
-
   const getServiceStatusText = (service) => {
     const equipmentList = service.equipmentList || [];
     const totalEquipment = equipmentList.length;
@@ -488,21 +389,40 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
     return '#EF4444';
   };
 
-  const isEquipmentNew = (service, equipment) => {
-    if (equipment.status === 'C') return false;
-    if (equipment.status !== 'A') return false;
-    
-    if (!service.date || service.date === '-') return false;
-    
-    const parts = service.date.split('/');
+  const isRequestDateWithinFiveDays = (dateValue) => {
+    if (typeof dateValue !== 'string' || dateValue === '-' || dateValue === 'N/A') return false;
+
+    const parts = dateValue.split('/');
     if (parts.length !== 3) return false;
-    
-    const requestDate = new Date(parts[2], parts[1] - 1, parts[0]);
+
+    const [day, month, year] = parts.map(Number);
+    if (!Number.isInteger(day) || !Number.isInteger(month) || !Number.isInteger(year)) return false;
+    if (day < 1 || month < 1 || month > 12 || year < 1) return false;
+
+    const parsedDate = new Date(year, month - 1, day);
+    if (
+      parsedDate.getFullYear() !== year ||
+      parsedDate.getMonth() !== month - 1 ||
+      parsedDate.getDate() !== day
+    ) return false;
+
     const today = new Date();
-    const diffTime = today - requestDate;
-    const diffDays = diffTime / (1000 * 60 * 60 * 24);
-    
-    return diffDays <= 7;
+    const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+    const requestDateUtc = Date.UTC(year, month - 1, day);
+    const daysSinceRequest = (todayUtc - requestDateUtc) / (24 * 60 * 60 * 1000);
+
+    return daysSinceRequest >= 0 && daysSinceRequest <= 5;
+  };
+
+  const recentServices = serviceRequests.filter(service =>
+    isRequestDateWithinFiveDays(service.date)
+  );
+  const newServiceIds = new Set(recentServices.map(service => String(service.id)));
+  const newPlantNames = new Set(recentServices.map(service => service.plant).filter(Boolean));
+
+  const isEquipmentNew = (service, equipment) => {
+    if (equipment.status !== 'A') return false;
+    return isRequestDateWithinFiveDays(service.date);
   };
 
   if (loading && !refreshing) {
@@ -524,13 +444,11 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
           <View style={styles.headerRight}>
             <TouchableOpacity 
               style={styles.notificationIcon}
-              onPress={() => setShowStatusModal(true)}
+              onPress={() => setShowNotificationDropdown(prev => !prev)}
             >
               <Ionicons name="notifications-outline" size={24} color="#fff" />
-              {unreadCount > 0 && (
-                <View style={styles.notificationBadge}>
-                  <Text style={styles.notificationBadgeText}>{unreadCount}</Text>
-                </View>
+              {recentServices.length > 0 && (
+                <View style={styles.notificationNewDot} />
               )}
             </TouchableOpacity>
           </View>
@@ -543,32 +461,28 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
             <TouchableWithoutFeedback onPress={e => e.stopPropagation()}>
               <View style={styles.notificationDropdown}>
                 <View style={styles.notificationDropdownHeader}>
-                  <Text style={styles.notificationDropdownTitle}>Notifications</Text>
-                  {notifications.length > 0 && (
-                    <TouchableOpacity onPress={clearAllNotifications}>
-                      <Text style={styles.clearAllText}>Clear all</Text>
-                    </TouchableOpacity>
-                  )}
+                  <Text style={styles.notificationDropdownTitle}>New Services</Text>
+                  <TouchableOpacity onPress={() => setShowNotificationDropdown(false)}>
+                    <Ionicons name="close" size={20} color="#64748b" />
+                  </TouchableOpacity>
                 </View>
-                {notifications.length === 0 ? (
+                {recentServices.length === 0 ? (
                   <View style={styles.noNotificationsDropdown}>
-                    <Text style={styles.noNotificationsText}>No notifications</Text>
+                    <Text style={styles.noNotificationsText}>No new services within 5 days</Text>
                   </View>
                 ) : (
-                  notifications.map((item, index) => (
-                    <TouchableOpacity 
-                      key={index} 
-                      style={[styles.notificationDropdownItem, item.read && styles.notificationDropdownItemRead]}
-                      onPress={() => markNotificationAsRead(item.id)}
-                    >
-                      <View style={styles.notificationDot}>
-                        {!item.read && <View style={styles.unreadDotSmall} />}
+                  <ScrollView style={styles.notificationList} showsVerticalScrollIndicator>
+                    {recentServices.map(service => (
+                      <View key={String(service.id)} style={styles.notificationDropdownItem}>
+                        <View style={styles.notificationDetails}>
+                          <Text style={styles.notificationPlantName}>{service.plant || 'Unknown plant'}</Text>
+                          <Text style={styles.notificationServiceDetails}>
+                            SR-{service.id} - Request date: {service.date}
+                          </Text>
+                        </View>
                       </View>
-                      <Text style={[styles.notificationDropdownMessage, item.read && styles.notificationDropdownMessageRead]}>
-                        {item.message}
-                      </Text>
-                    </TouchableOpacity>
-                  ))
+                    ))}
+                  </ScrollView>
                 )}
               </View>
             </TouchableWithoutFeedback>
@@ -786,7 +700,7 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
                     const allCompleted = service.equipmentList?.length > 0 && service.equipmentList?.every(eq => eq.status === 'C');
                     const totalEquipment = service.equipmentList?.length || 0;
                     const completedEquipment = service.equipmentList?.filter(eq => eq.status === 'C').length || 0;
-                    const isNewService = newServiceIds.has(service.id);
+                    const isNewService = newServiceIds.has(String(service.id));
                     const statusText = getServiceStatusText(service);
                     const statusColor = getServiceStatusColor(service);
                     
@@ -892,85 +806,6 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
           );
         }}
       />
-
-      {/* ✅ STATUS MODAL - Clean, small cards, button ku kela */}
-      <Modal
-        visible={showStatusModal}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowStatusModal(false)}
-      >
-        <TouchableOpacity 
-          style={styles.statusModalOverlay} 
-          activeOpacity={1} 
-          onPress={() => setShowStatusModal(false)}
-        >
-          <View style={styles.statusModalContainer}>
-            <View style={styles.statusModalHeader}>
-              <Text style={styles.statusModalTitle}>Service Status</Text>
-              <TouchableOpacity onPress={() => setShowStatusModal(false)}>
-                <Ionicons name="close" size={22} color="#64748b" />
-              </TouchableOpacity>
-            </View>
-            
-            {/* Horizontal ScrollView - Small cards */}
-            <ScrollView 
-              horizontal={true} 
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.statusModalContent}
-              decelerationRate="fast"
-            >
-              {/* Total Card */}
-              <TouchableOpacity style={styles.statusCard} onPress={() => {
-                setShowStatusModal(false);
-                setSelectedStatus('all');
-              }}>
-                <View style={[styles.statusIconCircle, { backgroundColor: '#1976d2' }]}>
-                  <Ionicons name="document-text-outline" size={22} color="#fff" />
-                </View>
-                <Text style={styles.statusCount}>{getStatusCountsWithColors().total}</Text>
-                <Text style={styles.statusLabel}>Total</Text>
-              </TouchableOpacity>
-              
-              {/* Assigned Card - Orange */}
-              <TouchableOpacity style={styles.statusCard} onPress={() => {
-                setShowStatusModal(false);
-                setSelectedStatus('assigned');
-              }}>
-                <View style={[styles.statusIconCircle, { backgroundColor: '#FF9800' }]}>
-                  <Ionicons name="time-outline" size={22} color="#fff" />
-                </View>
-                <Text style={[styles.statusCount, { color: '#FF9800' }]}>{getStatusCountsWithColors().assigned}</Text>
-                <Text style={styles.statusLabel}>Assigned</Text>
-              </TouchableOpacity>
-              
-              {/* In Progress Card - Green */}
-              <TouchableOpacity style={styles.statusCard} onPress={() => {
-                setShowStatusModal(false);
-                setSelectedStatus('pending');
-              }}>
-                <View style={[styles.statusIconCircle, { backgroundColor: '#4CAF50' }]}>
-                  <Ionicons name="refresh-circle-outline" size={22} color="#fff" />
-                </View>
-                <Text style={[styles.statusCount, { color: '#4CAF50' }]}>{getStatusCountsWithColors().pending}</Text>
-                <Text style={styles.statusLabel}>Progress</Text>
-              </TouchableOpacity>
-              
-              {/* Completed Card - Red */}
-              <TouchableOpacity style={styles.statusCard} onPress={() => {
-                setShowStatusModal(false);
-                setSelectedStatus('completed');
-              }}>
-                <View style={[styles.statusIconCircle, { backgroundColor: '#EF4444' }]}>
-                  <Ionicons name="checkmark-done-circle-outline" size={22} color="#fff" />
-                </View>
-                <Text style={[styles.statusCount, { color: '#EF4444' }]}>{getStatusCountsWithColors().completed}</Text>
-                <Text style={styles.statusLabel}>Completed</Text>
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
-        </TouchableOpacity>
-      </Modal>
 
       {/* View Details Modal */}
       <Modal animationType="slide" transparent={true} visible={viewDetailsModal} onRequestClose={() => setViewDetailsModal(false)}>
@@ -1326,47 +1161,16 @@ const styles = StyleSheet.create({
   headerLeft: { width: 24 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   notificationIcon: { position: 'relative', padding: 4 },
-  notificationBadge: { position: 'absolute', top: -2, right: -4, backgroundColor: '#FF4444', borderRadius: 10, minWidth: 18, height: 18, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
-  notificationBadgeText: { color: '#fff', fontSize: 10, fontWeight: 'bold' },
-  
-  // ✅ STATUS MODAL STYLES - Button ku kela (top), small cards
-  statusModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-start', alignItems: 'center', paddingTop: 70 },
-  statusModalContainer: { backgroundColor: '#fff', borderRadius: 16, width: width * 0.92, maxHeight: height * 0.35, overflow: 'hidden' },
-  statusModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 12, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
-  statusModalTitle: { fontSize: 16, fontWeight: 'bold', color: '#333' },
-  statusModalContent: { paddingHorizontal: 12, paddingVertical: 16, flexDirection: 'row', gap: 12 },
-  statusCard: { 
-    backgroundColor: '#fff', 
-    borderRadius: 12, 
-    padding: 12, 
-    width: width * 0.2,
-    minWidth: 70,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e8e8e8',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 2,
-    elevation: 1
-  },
-  statusIconCircle: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
-  statusInfo: { alignItems: 'center' },
-  statusCount: { fontSize: 20, fontWeight: 'bold', color: '#333' },
-  statusLabel: { fontSize: 11, fontWeight: '500', color: '#666', marginTop: 4 },
-  statusSubLabel: { fontSize: 9, color: '#999', marginTop: 2, textAlign: 'center' },
-  
+  notificationNewDot: { position: 'absolute', top: 1, right: 1, width: 9, height: 9, borderRadius: 5, backgroundColor: '#F44336', borderWidth: 1, borderColor: '#1976d2' },
   notificationOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 999, backgroundColor: 'transparent' },
-  notificationDropdown: { position: 'absolute', top: 60, right: 16, backgroundColor: '#fff', borderRadius: 12, elevation: 10, minWidth: 220, maxWidth: 280, zIndex: 1000, borderWidth: 1, borderColor: '#e0e0e0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
+  notificationDropdown: { position: 'absolute', top: 60, right: 16, backgroundColor: '#fff', borderRadius: 12, elevation: 10, minWidth: 220, maxWidth: 280, maxHeight: height * 0.6, zIndex: 1000, borderWidth: 1, borderColor: '#e0e0e0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, overflow: 'hidden' },
   notificationDropdownHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
   notificationDropdownTitle: { fontSize: 14, fontWeight: 'bold', color: '#333' },
-  clearAllText: { fontSize: 11, color: '#1976d2' },
-  notificationDropdownItem: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f5f5f5' },
-  notificationDropdownItemRead: { backgroundColor: '#f9f9f9' },
-  notificationDot: { width: 20, alignItems: 'center' },
-  unreadDotSmall: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#1976d2' },
-  notificationDropdownMessage: { flex: 1, fontSize: 12, color: '#333' },
-  notificationDropdownMessageRead: { color: '#999' },
+  notificationList: { maxHeight: height * 0.5 },
+  notificationDropdownItem: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f5f5f5' },
+  notificationDetails: { flex: 1 },
+  notificationPlantName: { fontSize: 13, fontWeight: '600', color: '#333' },
+  notificationServiceDetails: { fontSize: 11, color: '#777', marginTop: 3 },
   noNotificationsDropdown: { padding: 20, alignItems: 'center' },
   noNotificationsText: { fontSize: 12, color: '#999' },
   
