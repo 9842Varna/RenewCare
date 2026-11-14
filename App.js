@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { View, Text, TouchableOpacity, StyleSheet, Modal } from "react-native";
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { View, Text, TouchableOpacity, StyleSheet, Modal, BackHandler } from "react-native";
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -17,16 +17,35 @@ import AdminDashboardScreen from "./screens/Admin/AdminDashboardScreen";
 import AdminPlantsScreen from "./screens/Admin/AdminPlantsScreen";
 import AdminCustomersScreen from "./screens/Admin/AdminCustomersScreen";
 
+const ProfileNavigationHeader = ({ onBack }) => {
+  const insets = useSafeAreaInsets();
+
+  return (
+    <View style={[styles.profilePageHeader, { paddingTop: insets.top + 8 }]}>
+      <TouchableOpacity
+        style={styles.profilePageBackButton}
+        onPress={onBack}
+        accessibilityRole="button"
+        accessibilityLabel="Back to dashboard"
+      >
+        <Ionicons name="arrow-back" size={22} color="#ffffff" />
+      </TouchableOpacity>
+      <Text style={styles.profilePageTitle}>My Profile</Text>
+    </View>
+  );
+};
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [userRole, setUserRole] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [showProfileScreen, setShowProfileScreen] = useState(false);
   
   // Employee tabs
   const [activeTab, setActiveTab] = useState('services');
   
-  // Admin tabs (5 tabs: Services, Plants, Customers, Dashboard, Profile)
+  // Admin tabs
   const [adminTab, setAdminTab] = useState('services');
   
   const [showLogoutModal, setShowLogoutModal] = useState(false);
@@ -34,6 +53,17 @@ export default function App() {
   useEffect(() => {
     checkSession();
   }, []);
+
+  useEffect(() => {
+    if (!showProfileScreen) return undefined;
+
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      setShowProfileScreen(false);
+      return true;
+    });
+
+    return () => subscription.remove();
+  }, [showProfileScreen]);
 
   const checkSession = async () => {
     try {
@@ -63,6 +93,7 @@ export default function App() {
 
   const handleLogoutConfirm = async () => {
     setShowLogoutModal(false);
+    setShowProfileScreen(false);
     try {
       await AsyncStorage.removeItem('userData');
       await AsyncStorage.removeItem('employeeData');
@@ -89,14 +120,15 @@ export default function App() {
   const switchToServicesTab = () => setActiveTab('services');
   const switchToPlantsTab = () => setActiveTab('plants');
   const switchToDashboardTab = () => setActiveTab('dashboard');
-  const switchToProfileTab = () => setActiveTab('profile');
 
-  // Admin navigation functions (5 tabs)
+  // Admin navigation functions
   const goToAdminServices = () => setAdminTab('services');
   const goToAdminPlants = () => setAdminTab('plants');
   const goToAdminCustomers = () => setAdminTab('customers');
   const goToAdminDashboard = () => setAdminTab('dashboard');
-  const goToAdminProfile = () => setAdminTab('profile');
+  const handleProfileUpdated = (profile) => {
+    setUser(currentUser => currentUser ? { ...currentUser, ...profile } : currentUser);
+  };
 
   if (loading) {
     return (
@@ -115,18 +147,31 @@ export default function App() {
     return (
       <SafeAreaProvider>
         <View style={styles.container}>
-          <AppHeader user={user} onLogout={handleLogout} />
+          {showProfileScreen ? (
+            <ProfileNavigationHeader onBack={() => setShowProfileScreen(false)} />
+          ) : (
+            <AppHeader
+              user={user}
+              onLogout={handleLogout}
+              onProfilePress={() => setShowProfileScreen(true)}
+            />
+          )}
           
           <View style={styles.content}>
-            {adminTab === 'services' && <AdminHomeScreen user={user} />}
-            {adminTab === 'plants' && <AdminPlantsScreen user={user} />}
-            {adminTab === 'customers' && <AdminCustomersScreen user={user} />}
-            {adminTab === 'dashboard' && <AdminDashboardScreen user={user} />}
-            {adminTab === 'profile' && <ProfileScreen user={user} onLogout={handleLogout} hideHeader={true} />}
+            {showProfileScreen ? (
+              <ProfileScreen user={user} onLogout={handleLogout} onProfileUpdated={handleProfileUpdated} />
+            ) : (
+              <>
+                {adminTab === 'services' && <AdminHomeScreen user={user} />}
+                {adminTab === 'plants' && <AdminPlantsScreen user={user} />}
+                {adminTab === 'customers' && <AdminCustomersScreen user={user} />}
+                {adminTab === 'dashboard' && <AdminDashboardScreen user={user} onNavigateToTab={setAdminTab} />}
+              </>
+            )}
           </View>
           
-          {/* Admin Bottom Navigation - 5 Tabs: Services, Plants, Customers, Dashboard, Profile */}
-          <View style={styles.bottomNav}>
+          {/* Admin Bottom Navigation */}
+          <View style={[styles.bottomNav, showProfileScreen && styles.bottomNavHidden]}>
             <TouchableOpacity 
               style={styles.navItem}
               onPress={goToAdminServices}
@@ -190,22 +235,6 @@ export default function App() {
               </Text>
               {adminTab === 'dashboard' && <View style={styles.activeIndicator} />}
             </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={styles.navItem}
-              onPress={goToAdminProfile}
-              activeOpacity={0.7}
-            >
-              <Ionicons 
-                name={adminTab === 'profile' ? 'person-circle' : 'person-circle-outline'} 
-                size={24} 
-                color={adminTab === 'profile' ? '#1976d2' : '#9e9e9e'} 
-              />
-              <Text style={[styles.navLabel, adminTab === 'profile' && styles.navLabelActive]}>
-                Profile
-              </Text>
-              {adminTab === 'profile' && <View style={styles.activeIndicator} />}
-            </TouchableOpacity>
           </View>
 
           {/* Custom Logout Modal */}
@@ -250,30 +279,41 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <View style={styles.container}>
-        <AppHeader user={user} onLogout={handleLogout} />
+        {showProfileScreen ? (
+          <ProfileNavigationHeader onBack={() => setShowProfileScreen(false)} />
+        ) : (
+          <AppHeader
+            user={user}
+            onLogout={handleLogout}
+            onProfilePress={() => setShowProfileScreen(true)}
+          />
+        )}
         
         <View style={styles.content}>
-          {activeTab === 'services' && (
-            <EmployeeDashboard user={user} onLogout={handleLogout} hideHeader={true} />
-          )}
-          {activeTab === 'plants' && (
-            <PlantsScreen user={user} onBackToServices={switchToServicesTab} hideHeader={true} />
-          )}
-          {activeTab === 'dashboard' && (
-            <DashboardScreen 
-              user={user} 
-              onBackToServices={switchToServicesTab} 
-              onLogout={handleLogout}
-              hideHeader={true}
-            />
-          )}
-          {activeTab === 'profile' && (
-            <ProfileScreen user={user} onLogout={handleLogout} hideHeader={true} />
+          {showProfileScreen ? (
+            <ProfileScreen user={user} onLogout={handleLogout} onProfileUpdated={handleProfileUpdated} />
+          ) : (
+            <>
+              {activeTab === 'services' && (
+                <EmployeeDashboard user={user} onLogout={handleLogout} hideHeader={true} />
+              )}
+              {activeTab === 'plants' && (
+                <PlantsScreen user={user} onBackToServices={switchToServicesTab} hideHeader={true} />
+              )}
+              {activeTab === 'dashboard' && (
+                <DashboardScreen
+                  user={user}
+                  onBackToServices={switchToServicesTab}
+                  onLogout={handleLogout}
+                  hideHeader={true}
+                />
+              )}
+            </>
           )}
         </View>
         
         {/* Bottom Navigation - Employee */}
-        <View style={styles.bottomNav}>
+        <View style={[styles.bottomNav, showProfileScreen && styles.bottomNavHidden]}>
           <TouchableOpacity 
             style={styles.navItem}
             onPress={switchToServicesTab}
@@ -320,22 +360,6 @@ export default function App() {
               Dashboard
             </Text>
             {activeTab === 'dashboard' && <View style={styles.activeIndicator} />}
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={styles.navItem}
-            onPress={switchToProfileTab}
-            activeOpacity={0.7}
-          >
-            <Ionicons 
-              name={activeTab === 'profile' ? 'person-circle' : 'person-circle-outline'} 
-              size={24} 
-              color={activeTab === 'profile' ? '#1976d2' : '#9e9e9e'} 
-            />
-            <Text style={[styles.navLabel, activeTab === 'profile' && styles.navLabelActive]}>
-              Profile
-            </Text>
-            {activeTab === 'profile' && <View style={styles.activeIndicator} />}
           </TouchableOpacity>
         </View>
 
@@ -386,6 +410,27 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f5f5f5',
   },
+  profilePageHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    backgroundColor: '#1976d2',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1565c0',
+  },
+  profilePageBackButton: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+  },
+  profilePageTitle: {
+    marginLeft: 8,
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -405,6 +450,9 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: -2 },
     shadowOpacity: 0.05,
     shadowRadius: 3,
+  },
+  bottomNavHidden: {
+    display: 'none',
   },
   navItem: {
     flex: 1,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   TextInput,
   Modal,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -20,11 +21,15 @@ import * as ImagePicker from 'expo-image-picker';
 //const API_BASE = 'http://10.196.32.8:2927/api';
 const API_BASE = 'http://192.168.29.223:2927/api';
 
-export default function ProfileScreen({ user, onLogout, hideHeader = true }) {
+export default function ProfileScreen({ user, onLogout, hideHeader = true, compact = false, onProfileUpdated }) {
+  const profileImageWrapperRef = useRef(null);
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const [employeeData, setEmployeeData] = useState(null);
   const [profileImage, setProfileImage] = useState(null);
   const [loading, setLoading] = useState(true);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [showImageOptionsModal, setShowImageOptionsModal] = useState(false);
+  const [imageOptionsPosition, setImageOptionsPosition] = useState({ top: 0, left: 12 });
   const [showEditModal, setShowEditModal] = useState(false);
   const [editData, setEditData] = useState({
     name: '',
@@ -143,6 +148,7 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true }) {
               
               if (response.data.status === 'success') {
                 setProfileImage(null);
+                onProfileUpdated?.({ profile_pic: null, profileImage: null });
                 Alert.alert('Success', 'Profile picture deleted!');
               }
             } catch (e) {
@@ -186,7 +192,9 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true }) {
       });
       
       if (response.data.status === 'success') {
-        setProfileImage(`${API_BASE}/profile/image/${empId}?t=${Date.now()}`);
+        const imageUrl = `${API_BASE}/profile/image/${empId}?t=${Date.now()}`;
+        setProfileImage(imageUrl);
+        onProfileUpdated?.({ profile_pic: imageUrl, profileImage: imageUrl });
         Alert.alert('Success', 'Profile picture updated!');
       }
     } catch (e) {
@@ -197,17 +205,29 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true }) {
   };
 
   const showImageOptions = () => {
-    Alert.alert(
-      'Profile Picture',
-      'Choose an option',
-      [
-        { text: '📷 Take Photo', onPress: takePhoto },
-        { text: '🖼️ Choose from Gallery', onPress: pickImage },
-        ...(profileImage ? [{ text: '🗑️ Delete Photo', onPress: deleteProfileImage, style: 'destructive' }] : []),
-        { text: 'Cancel', style: 'cancel' },
-      ],
-      { cancelable: true }
-    );
+    const showAtFallbackPosition = () => {
+      setImageOptionsPosition({ top: Math.min(160, Math.max(12, windowHeight - 190)), left: 12 });
+      setShowImageOptionsModal(true);
+    };
+
+    if (!profileImageWrapperRef.current?.measureInWindow) {
+      showAtFallbackPosition();
+      return;
+    }
+
+    profileImageWrapperRef.current.measureInWindow((x, y, width, height) => {
+      const popoverWidth = Math.min(190, windowWidth - 24);
+      setImageOptionsPosition({
+        top: Math.min(y + height + 8, Math.max(12, windowHeight - 190)),
+        left: Math.max(12, Math.min(x, windowWidth - popoverWidth - 12)),
+      });
+      setShowImageOptionsModal(true);
+    });
+  };
+
+  const selectImageOption = (action) => {
+    setShowImageOptionsModal(false);
+    setTimeout(action, 250);
   };
 
   const handleUpdateProfile = async () => {
@@ -235,6 +255,11 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true }) {
       
       if (response.data.status === 'success') {
         Alert.alert('Success', 'Profile updated successfully!');
+        onProfileUpdated?.({
+          name: updateData.name,
+          email: updateData.email,
+          phone: updateData.phone,
+        });
         setShowEditModal(false);
         loadEmployeeProfile();
       }
@@ -264,7 +289,11 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true }) {
       
       {/* Profile Header - Left aligned with profile pic and details in one line */}
       <View style={styles.profileHeader}>
-        <TouchableOpacity onPress={showImageOptions} style={styles.profileImageWrapper}>
+        <TouchableOpacity
+          ref={profileImageWrapperRef}
+          onPress={showImageOptions}
+          style={styles.profileImageWrapper}
+        >
           {uploadingImage ? (
             <View style={styles.profileImageSmall}>
               <ActivityIndicator size="small" color="#2b78c5" />
@@ -282,9 +311,9 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true }) {
         </TouchableOpacity>
         
         <View style={styles.profileInfo}>
-          <Text style={styles.profileNameHeader}>{employeeData?.name || 'Employee Name'}</Text>
-          <Text style={styles.profileRoleHeader}>{employeeData?.role || 'Service Engineer'}</Text>
-          <Text style={styles.profileIdHeader}>ID: {employeeData?.id || 'N/A'}</Text>
+          <Text style={styles.profileNameHeader}>{employeeData?.name || user?.name || 'Employee Name'}</Text>
+          <Text style={styles.profileRoleHeader}>{employeeData?.role || user?.role || 'User'}</Text>
+          <Text style={styles.profileIdHeader}>ID: {employeeData?.id || user?.id || 'N/A'}</Text>
         </View>
         
         <TouchableOpacity style={styles.editIconBtn} onPress={() => setShowEditModal(true)}>
@@ -294,17 +323,19 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true }) {
 
       {/* Profile Details Card */}
       <View style={styles.detailsCard}>
-        <Text style={styles.cardTitle}>Profile Details</Text>
+        <Text style={styles.cardTitle}>{compact ? 'Contact Details' : 'Profile Details'}</Text>
         
-        <View style={styles.detailRow}>
-          <View style={styles.detailIcon}>
-            <Ionicons name="person-outline" size={18} color="#2b78c5" />
+        {!compact && (
+          <View style={styles.detailRow}>
+            <View style={styles.detailIcon}>
+              <Ionicons name="person-outline" size={18} color="#2b78c5" />
+            </View>
+            <View style={styles.detailContent}>
+              <Text style={styles.detailLabel}>Full Name</Text>
+              <Text style={styles.detailValue}>{employeeData?.name || 'Not set'}</Text>
+            </View>
           </View>
-          <View style={styles.detailContent}>
-            <Text style={styles.detailLabel}>Full Name</Text>
-            <Text style={styles.detailValue}>{employeeData?.name || 'Not set'}</Text>
-          </View>
-        </View>
+        )}
         
         <View style={styles.detailRow}>
           <View style={styles.detailIcon}>
@@ -326,37 +357,68 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true }) {
           </View>
         </View>
         
-        <View style={styles.detailRow}>
-          <View style={styles.detailIcon}>
-            <Ionicons name="calendar-outline" size={18} color="#2b78c5" />
+        {!compact && (
+          <View style={styles.detailRow}>
+            <View style={styles.detailIcon}>
+              <Ionicons name="calendar-outline" size={18} color="#2b78c5" />
+            </View>
+            <View style={styles.detailContent}>
+              <Text style={styles.detailLabel}>Date of Joining</Text>
+              <Text style={styles.detailValue}>{employeeData?.joiningDate || 'Not set'}</Text>
+            </View>
           </View>
-          <View style={styles.detailContent}>
-            <Text style={styles.detailLabel}>Date of Joining</Text>
-            <Text style={styles.detailValue}>{employeeData?.joiningDate || 'Not set'}</Text>
-          </View>
-        </View>
+        )}
         
-        <View style={styles.detailRow}>
-          <View style={styles.detailIcon}>
-            {getGenderIcon(employeeData?.gender) === 'male-outline' ? (
-              <Ionicons name="male-outline" size={18} color="#2b78c5" />
-            ) : getGenderIcon(employeeData?.gender) === 'female-outline' ? (
-              <Ionicons name="female-outline" size={18} color="#2b78c5" />
-            ) : (
-              <Ionicons name="person-outline" size={18} color="#2b78c5" />
+        {!compact && (
+          <View style={styles.detailRow}>
+            <View style={styles.detailIcon}>
+              {getGenderIcon(employeeData?.gender) === 'male-outline' ? (
+                <Ionicons name="male-outline" size={18} color="#2b78c5" />
+              ) : getGenderIcon(employeeData?.gender) === 'female-outline' ? (
+                <Ionicons name="female-outline" size={18} color="#2b78c5" />
+              ) : (
+                <Ionicons name="person-outline" size={18} color="#2b78c5" />
+              )}
+            </View>
+            <View style={styles.detailContent}>
+              <Text style={styles.detailLabel}>Gender</Text>
+              <Text style={styles.detailValue}>
+                {employeeData?.gender === 'M' ? 'Male' : employeeData?.gender === 'F' ? 'Female' : 'Not set'}
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {compact && (
+          <>
+            {employeeData?.districtName && (
+              <View style={styles.detailRow}>
+                <View style={styles.detailIcon}>
+                  <Ionicons name="location-outline" size={18} color="#2b78c5" />
+                </View>
+                <View style={styles.detailContent}>
+                  <Text style={styles.detailLabel}>District</Text>
+                  <Text style={styles.detailValue}>{employeeData.districtName}</Text>
+                </View>
+              </View>
             )}
-          </View>
-          <View style={styles.detailContent}>
-            <Text style={styles.detailLabel}>Gender</Text>
-            <Text style={styles.detailValue}>
-              {employeeData?.gender === 'M' ? 'Male' : employeeData?.gender === 'F' ? 'Female' : 'Not set'}
-            </Text>
-          </View>
-        </View>
+            {employeeData?.stateName && (
+              <View style={styles.detailRow}>
+                <View style={styles.detailIcon}>
+                  <Ionicons name="flag-outline" size={18} color="#2b78c5" />
+                </View>
+                <View style={styles.detailContent}>
+                  <Text style={styles.detailLabel}>State</Text>
+                  <Text style={styles.detailValue}>{employeeData.stateName}</Text>
+                </View>
+              </View>
+            )}
+          </>
+        )}
       </View>
 
       {/* Address Card */}
-      <View style={styles.detailsCard}>
+      {!compact && <View style={styles.detailsCard}>
         <Text style={styles.cardTitle}>Address Information</Text>
         
         <View style={styles.detailRow}>
@@ -408,9 +470,85 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true }) {
             <Text style={styles.detailValue}>{employeeData?.districtName || 'Not set'}</Text>
           </View>
         </View>
-      </View>
+      </View>}
 
       <View style={styles.footerSpace} />
+
+      <Modal
+        visible={showImageOptionsModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowImageOptionsModal(false)}
+      >
+        <View style={styles.imageOptionsOverlay}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFillObject}
+            onPress={() => setShowImageOptionsModal(false)}
+            activeOpacity={1}
+          />
+          <View
+            style={[
+              styles.imageOptionsContainer,
+              {
+                top: imageOptionsPosition.top,
+                left: imageOptionsPosition.left,
+                width: Math.min(190, windowWidth - 24),
+              },
+            ]}
+          >
+            <View style={styles.imageOptionsHeader}>
+              <TouchableOpacity
+                onPress={() => setShowImageOptionsModal(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Close photo options"
+              >
+                <Ionicons name="close" size={22} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={styles.imageOptionRow}
+              onPress={() => selectImageOption(takePhoto)}
+              accessibilityRole="button"
+            >
+              <View style={[styles.imageOptionIcon, styles.cameraOptionIcon]}>
+                <Ionicons name="camera-outline" size={21} color="#1976d2" />
+              </View>
+              <View style={styles.imageOptionTextContainer}>
+                <Text style={styles.imageOptionTitle}>Take Photo</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.imageOptionRow}
+              onPress={() => selectImageOption(pickImage)}
+              accessibilityRole="button"
+            >
+              <View style={[styles.imageOptionIcon, styles.galleryOptionIcon]}>
+                <Ionicons name="images-outline" size={21} color="#16856b" />
+              </View>
+              <View style={styles.imageOptionTextContainer}>
+                <Text style={styles.imageOptionTitle}>Choose from Gallery</Text>
+              </View>
+            </TouchableOpacity>
+
+            {profileImage && (
+              <TouchableOpacity
+                style={[styles.imageOptionRow, styles.deleteImageOptionRow]}
+                onPress={() => selectImageOption(deleteProfileImage)}
+                accessibilityRole="button"
+              >
+                <View style={[styles.imageOptionIcon, styles.deleteOptionIcon]}>
+                  <Ionicons name="trash-outline" size={20} color="#dc2626" />
+                </View>
+                <View style={styles.imageOptionTextContainer}>
+                  <Text style={styles.deleteImageOptionTitle}>Delete Photo</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       {/* Edit Profile Modal */}
       <Modal
@@ -654,6 +792,70 @@ const styles = StyleSheet.create({
   },
   footerSpace: {
     height: 30,
+  },
+  imageOptionsOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.3)',
+  },
+  imageOptionsContainer: {
+    position: 'absolute',
+    maxWidth: 190,
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    elevation: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.16,
+    shadowRadius: 8,
+  },
+  imageOptionsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    height: 26,
+  },
+  imageOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 44,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#edf0f4',
+    gap: 8,
+  },
+  imageOptionIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cameraOptionIcon: {
+    backgroundColor: '#eaf3ff',
+  },
+  galleryOptionIcon: {
+    backgroundColor: '#e8f7f2',
+  },
+  deleteOptionIcon: {
+    backgroundColor: '#fef2f2',
+  },
+  imageOptionTextContainer: {
+    flex: 1,
+  },
+  imageOptionTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1e293b',
+  },
+  deleteImageOptionRow: {
+    borderBottomWidth: 0,
+  },
+  deleteImageOptionTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#dc2626',
   },
   modalOverlay: {
     flex: 1,

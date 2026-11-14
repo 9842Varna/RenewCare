@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
+  Pressable,
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
@@ -29,6 +30,8 @@ export default function AdminCustomersScreen({ navigation }) {
   const [selectedDistrict, setSelectedDistrict] = useState('all');
   const [districts, setDistricts] = useState([]);
   const [showDistrictDropdown, setShowDistrictDropdown] = useState(false);
+  const [districtDropdownPosition, setDistrictDropdownPosition] = useState({ top: 0, left: 0 });
+  const districtSelectorRef = useRef(null);
   
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [showPlantModal, setShowPlantModal] = useState(false);
@@ -74,6 +77,18 @@ export default function AdminCustomersScreen({ navigation }) {
     } catch (error) {
       console.error('Error loading districts:', error);
     }
+  };
+
+  const toggleDistrictDropdown = () => {
+    if (showDistrictDropdown) {
+      setShowDistrictDropdown(false);
+      return;
+    }
+
+    districtSelectorRef.current?.measureInWindow((x, y, _width, selectorHeight) => {
+      setDistrictDropdownPosition({ top: y + selectorHeight, left: x });
+      setShowDistrictDropdown(true);
+    });
   };
 
   const loadCustomerPlants = async (customerId) => {
@@ -284,6 +299,12 @@ export default function AdminCustomersScreen({ navigation }) {
     );
   }
 
+  const districtOptions = getDistrictsWithPlants();
+  const districtDropdownHeight = Math.min(
+    (districtOptions.length + 1) * 44,
+    Math.min(height * 0.3, 180)
+  );
+
   return (
     <View style={styles.container}>
       {/* Header */}
@@ -297,7 +318,8 @@ export default function AdminCustomersScreen({ navigation }) {
         <View style={styles.districtWrapper}>
           <TouchableOpacity 
             style={styles.districtSelector}
-            onPress={() => setShowDistrictDropdown(!showDistrictDropdown)}
+            ref={districtSelectorRef}
+            onPress={toggleDistrictDropdown}
           >
             <Text style={styles.districtSelectorText}>
               {selectedDistrict !== 'all' 
@@ -307,38 +329,55 @@ export default function AdminCustomersScreen({ navigation }) {
             <Ionicons name="chevron-down" size={14} color="#6B7280" />
           </TouchableOpacity>
           
-          {showDistrictDropdown && (
-            <View style={styles.dropdownMenu}>
-              <ScrollView 
-                style={styles.dropdownScrollView}
-                showsVerticalScrollIndicator={true}
+          <Modal
+            visible={showDistrictDropdown}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setShowDistrictDropdown(false)}
+          >
+            <View style={styles.dropdownModalOverlay}>
+              <Pressable
+                style={StyleSheet.absoluteFill}
+                onPress={() => setShowDistrictDropdown(false)}
+              />
+              <View
+                style={[
+                  styles.dropdownMenu,
+                  { top: districtDropdownPosition.top, left: districtDropdownPosition.left },
+                ]}
               >
-                <TouchableOpacity 
-                  style={[styles.dropdownItem, selectedDistrict === 'all' && styles.dropdownItemActive]}
-                  onPress={() => { setSelectedDistrict('all'); setShowDistrictDropdown(false); }}
+                <ScrollView
+                  style={{ height: districtDropdownHeight }}
+                  showsVerticalScrollIndicator
+                  keyboardShouldPersistTaps="handled"
                 >
-                  <Text style={[styles.dropdownText, selectedDistrict === 'all' && styles.dropdownTextActive]}>All Districts</Text>
-                  <View style={styles.dropdownCount}>
-                    <Text style={styles.dropdownCountText}>{customers.length}</Text>
-                  </View>
-                </TouchableOpacity>
-                {getDistrictsWithPlants().map(district => (
-                  <TouchableOpacity 
-                    key={district.code}
-                    style={[styles.dropdownItem, selectedDistrict === district.code && styles.dropdownItemActive]}
-                    onPress={() => { setSelectedDistrict(district.code); setShowDistrictDropdown(false); }}
+                  <TouchableOpacity
+                    style={[styles.dropdownItem, selectedDistrict === 'all' && styles.dropdownItemActive]}
+                    onPress={() => { setSelectedDistrict('all'); setShowDistrictDropdown(false); }}
                   >
-                    <Text style={[styles.dropdownText, selectedDistrict === district.code && styles.dropdownTextActive]}>{district.name}</Text>
+                    <Text style={[styles.dropdownText, selectedDistrict === 'all' && styles.dropdownTextActive]}>All Districts</Text>
                     <View style={styles.dropdownCount}>
-                      <Text style={styles.dropdownCountText}>
-                        {customers.filter(c => c.districtCode === district.code && (c.plantCount || 0) > 0).length}
-                      </Text>
+                      <Text style={styles.dropdownCountText}>{customers.length}</Text>
                     </View>
                   </TouchableOpacity>
-                ))}
-              </ScrollView>
+                  {districtOptions.map(district => (
+                    <TouchableOpacity
+                      key={district.code}
+                      style={[styles.dropdownItem, selectedDistrict === district.code && styles.dropdownItemActive]}
+                      onPress={() => { setSelectedDistrict(district.code); setShowDistrictDropdown(false); }}
+                    >
+                      <Text style={[styles.dropdownText, selectedDistrict === district.code && styles.dropdownTextActive]}>{district.name}</Text>
+                      <View style={styles.dropdownCount}>
+                        <Text style={styles.dropdownCountText}>
+                          {customers.filter(c => c.districtCode === district.code && (c.plantCount || 0) > 0).length}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
             </View>
-          )}
+          </Modal>
         </View>
 
         <View style={styles.searchBar}>
@@ -685,13 +724,10 @@ const styles = StyleSheet.create({
   },
   dropdownMenu: {
     position: 'absolute',
-    top: 44,
-    left: 0,
     backgroundColor: '#FFFFFF',
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    zIndex: 200,
     elevation: 5,
     minWidth: 160,
     shadowColor: '#000',
@@ -699,8 +735,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
   },
-  dropdownScrollView: {
-    maxHeight: 250,
+  dropdownModalOverlay: {
+    flex: 1,
   },
   dropdownItem: {
     flexDirection: 'row',

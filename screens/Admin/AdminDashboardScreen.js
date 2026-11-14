@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
+  Animated,
+  PanResponder,
   View,
   Text,
   StyleSheet,
@@ -13,13 +15,108 @@ import {
   StatusBar,
 } from 'react-native';
 import { Ionicons, MaterialIcons, Feather } from '@expo/vector-icons';
-import { LineChart, PieChart } from 'react-native-chart-kit';
+import Svg, { Path } from 'react-native-svg';
 import axios from 'axios';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const { width, height } = Dimensions.get('window');
+const REPORT_TABS = ['district', 'revenue', 'status'];
 const API_BASE = 'http://192.168.29.223:2927/api';
 //const API_BASE = 'http://10.196.32.8:2927/api';
+
+const getPieSlicePath = (center, radius, startAngle, endAngle) => {
+  const toPoint = (angle) => {
+    const radians = (angle * Math.PI) / 180;
+    return {
+      x: center + radius * Math.cos(radians),
+      y: center + radius * Math.sin(radians),
+    };
+  };
+
+  if (endAngle - startAngle >= 359.999) {
+    return `M ${center - radius} ${center} A ${radius} ${radius} 0 1 0 ${center + radius} ${center} A ${radius} ${radius} 0 1 0 ${center - radius} ${center} Z`;
+  }
+
+  const start = toPoint(startAngle);
+  const end = toPoint(endAngle);
+  const largeArc = endAngle - startAngle > 180 ? 1 : 0;
+  return `M ${center} ${center} L ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} 1 ${end.x} ${end.y} Z`;
+};
+
+const InteractivePieChart = ({ data, width: chartWidth, height: chartHeight, onSlicePress }) => {
+  const total = data.reduce((sum, item) => sum + Number(item.count || 0), 0);
+  const pieSize = Math.min(chartHeight, chartWidth * 0.58);
+  const center = pieSize / 2;
+  const radius = pieSize * 0.42;
+  let startAngle = -90;
+
+  const slices = data.map((item) => {
+    const sliceAngle = total > 0 ? (Number(item.count || 0) / total) * 360 : 0;
+    const sliceStartAngle = startAngle;
+    const path = sliceAngle > 0
+      ? getPieSlicePath(center, radius, sliceStartAngle, sliceStartAngle + sliceAngle)
+      : null;
+    startAngle += sliceAngle;
+    return { item, path, startAngle: sliceStartAngle, endAngle: sliceStartAngle + sliceAngle };
+  });
+
+  const handlePieTouch = (event) => {
+    const { locationX, locationY } = event.nativeEvent;
+    const offsetX = locationX - center;
+    const offsetY = locationY - center;
+
+    if (Math.hypot(offsetX, offsetY) > radius) return;
+
+    const touchAngle = (Math.atan2(offsetY, offsetX) * 180 / Math.PI + 450) % 360;
+    const touchedSlice = slices.find(({ item, startAngle, endAngle }) =>
+      Number(item.count || 0) > 0 && touchAngle >= startAngle + 90 && touchAngle < endAngle + 90
+    );
+
+    if (touchedSlice) onSlicePress(touchedSlice.item);
+  };
+
+  return (
+    <View style={[styles.statusChartContent, { width: chartWidth, height: chartHeight }]}>
+      <View style={{ width: pieSize, height: pieSize }}>
+        <Svg
+          width={pieSize}
+          height={pieSize}
+          viewBox={`0 0 ${pieSize} ${pieSize}`}
+          pointerEvents="none"
+        >
+          {total > 0 ? slices.filter(slice => slice.path).map(({ item, path }) => (
+            <Path key={item.code} d={path} fill={item.color} />
+          )) : (
+            <Path
+              d={getPieSlicePath(center, radius, -90, 270)}
+              fill="#E2E8F0"
+            />
+          )}
+        </Svg>
+        {total > 0 && (
+          <View
+            style={StyleSheet.absoluteFill}
+            onStartShouldSetResponder={() => true}
+            onResponderRelease={handlePieTouch}
+          />
+        )}
+      </View>
+      <View style={styles.statusChartLegend}>
+        {data.map(item => (
+          <View
+            key={item.code}
+            style={styles.statusChartLegendItem}
+          >
+            <View style={[styles.statusChartLegendDot, { backgroundColor: item.color }]} />
+            <Text style={styles.statusChartLegendText}>
+              {item.count} {item.name}
+            </Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+};
 
 
 // Custom Horizontal Bar Chart Component
@@ -53,10 +150,69 @@ const HorizontalBarChart = ({ data, onBarPress }) => {
   );
 };
 
-export default function AdminDashboardScreen({ navigation }) {
+const RevenueBarChart = ({ data, width: chartWidth, formatMonth, formatValue, onBarPress }) => {
+  const maxValue = Math.max(...data.map(item => Number(item.revenue) || 0), 1);
+  const plotHeight = 136;
+  const tickValues = [maxValue, maxValue * 2 / 3, maxValue / 3, 0];
+
+  return (
+    <View style={[styles.revenueBarChart, { width: chartWidth }]}>
+      <View style={styles.revenueBarChartBody}>
+        <View style={[styles.revenueYAxis, { height: plotHeight }]}>
+          {tickValues.map((value, index) => (
+            <Text key={index} style={styles.revenueYAxisLabel} numberOfLines={1}>
+              {formatValue(value)}
+            </Text>
+          ))}
+        </View>
+        <View style={styles.revenuePlotColumn}>
+          <View style={[styles.revenuePlot, { height: plotHeight }]}>
+            {tickValues.map((_, index) => (
+              <View
+                key={index}
+                style={[styles.revenueGridLine, { top: (plotHeight - 1) * index / (tickValues.length - 1) }]}
+              />
+            ))}
+            <View style={styles.revenueBars}>
+              {data.map((item, index) => {
+                const value = Number(item.revenue) || 0;
+                const barHeight = Math.max((value / maxValue) * plotHeight, value > 0 ? 4 : 0);
+                const month = formatMonth(item).split(' ')[0];
+
+                return (
+                  <TouchableOpacity
+                    key={item.monthKey || item.month || index}
+                    style={styles.revenueBarColumn}
+                    onPress={() => onBarPress(item)}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${month}, ${formatValue(value)} revenue`}
+                  >
+                    <View style={[styles.revenueBar, { height: barHeight }]} />
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+          <View style={styles.revenueMonthLabels}>
+            {data.map((item, index) => (
+              <Text key={item.monthKey || item.month || index} style={styles.revenueMonthLabel} numberOfLines={1}>
+                {formatMonth(item).split(' ')[0]}
+              </Text>
+            ))}
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+};
+
+export default function AdminDashboardScreen({ navigation, onNavigateToTab }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedReport, setSelectedReport] = useState('district');
+  const selectedReportRef = useRef('district');
+  const reportSlide = useRef(new Animated.Value(0)).current;
   
   const [showModal, setShowModal] = useState(false);
   const [modalTitle, setModalTitle] = useState('');
@@ -123,6 +279,44 @@ export default function AdminDashboardScreen({ navigation }) {
     setRefreshing(false);
   };
 
+  const changeReport = (nextReport) => {
+    const currentReport = selectedReportRef.current;
+    if (nextReport === currentReport) return;
+
+    const direction = REPORT_TABS.indexOf(nextReport) > REPORT_TABS.indexOf(currentReport) ? 1 : -1;
+    selectedReportRef.current = nextReport;
+    reportSlide.stopAnimation();
+    reportSlide.setValue(direction * width * 0.55);
+    setSelectedReport(nextReport);
+    Animated.timing(reportSlide, {
+      toValue: 0,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const reportPanResponder = useRef(null);
+  if (!reportPanResponder.current) {
+    const shouldCaptureHorizontalSwipe = (_, gestureState) =>
+      Math.abs(gestureState.dx) > 14 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.2;
+
+    reportPanResponder.current = PanResponder.create({
+      onMoveShouldSetPanResponderCapture: shouldCaptureHorizontalSwipe,
+      onMoveShouldSetPanResponder: shouldCaptureHorizontalSwipe,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderRelease: (_, gestureState) => {
+        if (Math.abs(gestureState.dx) < 55 || Math.abs(gestureState.dx) <= Math.abs(gestureState.dy)) return;
+
+        const currentIndex = REPORT_TABS.indexOf(selectedReportRef.current);
+        const nextIndex = Math.max(0, Math.min(
+          REPORT_TABS.length - 1,
+          currentIndex + (gestureState.dx < 0 ? 1 : -1)
+        ));
+        if (nextIndex !== currentIndex) changeReport(REPORT_TABS[nextIndex]);
+      },
+    });
+  }
+
   const formatDateOnly = (dateStr) => {
     if (!dateStr) return '-';
     const date = new Date(dateStr);
@@ -146,6 +340,17 @@ export default function AdminDashboardScreen({ navigation }) {
     return `₹${result}`;
   };
 
+  const formatCompactCurrency = (value) => {
+    const amount = Number(value) || 0;
+    const absoluteAmount = Math.abs(amount);
+    const compact = (divisor, suffix) => `${Number((amount / divisor).toFixed(1))}${suffix}`;
+
+    if (absoluteAmount >= 10000000) return `₹${compact(10000000, 'Cr')}`;
+    if (absoluteAmount >= 100000) return `₹${compact(100000, 'L')}`;
+    if (absoluteAmount >= 1000) return `₹${compact(1000, 'k')}`;
+    return `₹${Math.round(amount)}`;
+  };
+
   const handleDistrictClick = async (districtName) => {
     setModalTitle(`${districtName} - Services`);
     setModalLoading(true);
@@ -160,8 +365,12 @@ export default function AdminDashboardScreen({ navigation }) {
     }
   };
 
-  const handleRevenueClick = async (month, year) => {
-    setModalTitle(`${month} ${year} - Services`);
+  const handleRevenueClick = async (month, year, revenue) => {
+    const monthNumber = Number(month);
+    const monthLabel = monthNumber >= 1 && monthNumber <= 12
+      ? new Date(Number(year), monthNumber - 1, 1).toLocaleString('en-US', { month: 'short' })
+      : String(month).substring(0, 3);
+    setModalTitle(`${monthLabel} ${year} · ${formatCurrency(revenue)} · Services`);
     setModalLoading(true);
     setShowModal(true);
     try {
@@ -176,11 +385,21 @@ export default function AdminDashboardScreen({ navigation }) {
     }
   };
 
-  const handleStatusClick = async (statusName) => {
-    let statusCode = '';
-    if (statusName === 'Open') statusCode = 'O';
-    else if (statusName === 'Assigned') statusCode = 'A';
-    else if (statusName === 'Completed') statusCode = 'C';
+  const closeServicesModal = () => {
+    setShowDetailModal(false);
+    setShowModal(false);
+  };
+
+  const handleStatusClick = async (status) => {
+    const statusName = typeof status === 'string' ? status : status.name;
+    const statusCode = typeof status === 'string'
+      ? { Open: 'O', Assigned: 'A', Completed: 'C' }[status]
+      : status.code;
+
+    if (!statusCode) {
+      console.error('Unsupported dashboard service status:', statusName);
+      return;
+    }
     
     setModalTitle(`${statusName} Services`);
     setModalLoading(true);
@@ -213,16 +432,15 @@ export default function AdminDashboardScreen({ navigation }) {
     return [...districts].sort((a, b) => b.count - a.count);
   };
 
-  const getRevenueData = () => {
-    const r = dashboardData.monthlyRevenue || [];
-    return {
-      labels: r.map(x => {
-        if (x.month) return x.month.substring(0, 3);
-        if (x.monthKey) return x.monthKey.substring(5, 7);
-        return '';
-      }),
-      datasets: [{ data: r.map(x => x.revenue || 0) }],
-    };
+  const formatRevenueMonth = (item) => {
+    if (item.monthKey) {
+      const [year, month] = item.monthKey.split('-').map(Number);
+      if (year && month >= 1 && month <= 12) {
+        const monthLabel = new Date(year, month - 1, 1).toLocaleString('en-US', { month: 'short' });
+        return `${monthLabel} ${year}`;
+      }
+    }
+    return item.month || '';
   };
 
   // ✅ FIXED STATUS COLORS
@@ -232,8 +450,13 @@ export default function AdminDashboardScreen({ navigation }) {
     { name: 'Completed', count: dashboardData.serviceStatus?.completed || 0, color: '#EF4444', code: 'C' },
   ];
 
-  const StatCard = ({ title, value, icon, color }) => (
-    <View style={styles.statCard}>
+  const StatCard = ({ title, value, icon, color, onPress }) => (
+    <TouchableOpacity
+      style={styles.statCard}
+      onPress={onPress}
+      disabled={!onPress}
+      activeOpacity={0.75}
+    >
       <View style={[styles.statIcon, { backgroundColor: color + '10' }]}>
         <Ionicons name={icon} size={22} color={color} />
       </View>
@@ -241,13 +464,14 @@ export default function AdminDashboardScreen({ navigation }) {
         <Text style={styles.statValue}>{value}</Text>
         <Text style={styles.statTitle}>{title}</Text>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 
   // ✅ CORRECT STATUS COLOR FUNCTION
   const getStatusColor = (status) => {
     if (status === 'C') return '#EF4444';     // Completed - Red
     if (status === 'A') return '#F59E0B';     // Assigned - Orange
+    if (status === 'P') return '#F59E0B';     // Assigned - Orange
     if (status === 'O') return '#10B981';     // Open - Green
     return '#10B981';
   };
@@ -255,8 +479,21 @@ export default function AdminDashboardScreen({ navigation }) {
   const getStatusText = (status) => {
     if (status === 'C') return 'Completed';
     if (status === 'A') return 'Assigned';
+    if (status === 'P') return 'Assigned';
     if (status === 'O') return 'Open';
     return 'Open';
+  };
+
+  const getServiceRequestStatus = (service) => {
+    const equipmentStatuses = service?.equipments?.map(equipment => equipment.status).filter(Boolean) || [];
+
+    if (equipmentStatuses.length > 0) {
+      if (equipmentStatuses.every(status => status === 'C')) return 'C';
+      if (equipmentStatuses.some(status => status === 'O')) return 'O';
+      if (equipmentStatuses.some(status => status === 'A' || status === 'P')) return 'A';
+    }
+
+    return service?.serviceRequestStatus;
   };
 
   // ✅ IMPROVED TABLE ROW with proper alignment
@@ -268,18 +505,18 @@ export default function AdminDashboardScreen({ navigation }) {
     return (
       <TouchableOpacity style={styles.modalTableRow} onPress={() => onPress(item.srid)} activeOpacity={0.7}>
         <View style={styles.cellId}>
-          <Text style={styles.cellIdText}>SR-{item.srid}</Text>
+          <Text style={styles.cellIdText} numberOfLines={1}>SR-{item.srid}</Text>
         </View>
         <View style={styles.cellPlant}>
-          <Text style={styles.cellPlantText} numberOfLines={1}>{item.plantName || item.customerName || '-'}</Text>
+          <Text style={styles.cellPlantText} numberOfLines={2}>{item.plantName || item.customerName || '-'}</Text>
         </View>
         <View style={styles.cellStatus}>
-          <Text style={[styles.cellStatusText, { color: statusColor }]}>
+          <Text style={[styles.cellStatusText, { color: statusColor }]} numberOfLines={1}>
             {displayStatus}
           </Text>
         </View>
         <View style={styles.cellDate}>
-          <Text style={styles.cellDateText}>{formatDateOnly(item.requestDate)}</Text>
+          <Text style={styles.cellDateText} numberOfLines={1}>{formatDateOnly(item.requestDate)}</Text>
         </View>
         <View style={styles.cellArrow}>
           <Feather name="chevron-right" size={16} color="#cbd5e1" />
@@ -329,11 +566,17 @@ export default function AdminDashboardScreen({ navigation }) {
     );
   };
 
-  // Service Detail Modal
-  const ServiceDetailModal = ({ visible, data, loading, onClose }) => {
+  // Nested Service Detail Sheet
+  const ServiceDetailSheet = ({ visible, data, loading, onClose }) => {
+    if (!visible) return null;
+
     return (
-      <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
         <View style={styles.detailOverlay}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            onPress={onClose}
+            activeOpacity={1}
+          />
           <View style={styles.detailModal}>
             <View style={styles.detailHeader}>
               <Text style={styles.detailTitle}>Service Details</Text>
@@ -369,8 +612,8 @@ export default function AdminDashboardScreen({ navigation }) {
                     </View>
                     <View style={styles.detailRow}>
                       <Text style={styles.detailLabel}>Status</Text>
-                      <Text style={[styles.detailValue, { color: getStatusColor(data.status), fontWeight: '600' }]}>
-                        {getStatusText(data.status)}
+                      <Text style={[styles.detailValue, { color: getStatusColor(getServiceRequestStatus(data)), fontWeight: '600' }]}>
+                        {getStatusText(getServiceRequestStatus(data))}
                       </Text>
                     </View>
                     {data.problem && data.problem !== '-' && (
@@ -497,7 +740,6 @@ export default function AdminDashboardScreen({ navigation }) {
             </ScrollView>
           </View>
         </View>
-      </Modal>
     );
   };
 
@@ -511,7 +753,10 @@ export default function AdminDashboardScreen({ navigation }) {
   }
 
   const sortedDistricts = getSortedDistricts();
-  const revenueData = getRevenueData();
+  const revenueMonths = dashboardData.monthlyRevenue || [];
+  const revenuePeriodLabel = revenueMonths.length
+    ? `${formatRevenueMonth(revenueMonths[0])} – ${formatRevenueMonth(revenueMonths[revenueMonths.length - 1])}`
+    : '';
 
   return (
     <SafeAreaView style={styles.container}>
@@ -527,31 +772,31 @@ export default function AdminDashboardScreen({ navigation }) {
 
         {/* Stats Cards */}
         <View style={styles.statsRow}>
-          <StatCard title="Customers" value={dashboardData.totalCustomers} icon="people-outline" color="#3b82f6" />
-          <StatCard title="Plants" value={dashboardData.totalPlants} icon="business-outline" color="#22c55e" />
-          <StatCard title="Services" value={dashboardData.totalServices} icon="settings-outline" color="#f59e0b" />
+          <StatCard title="Customers" value={dashboardData.totalCustomers} icon="people-outline" color="#3b82f6" onPress={() => onNavigateToTab?.('customers')} />
+          <StatCard title="Plants" value={dashboardData.totalPlants} icon="business-outline" color="#22c55e" onPress={() => onNavigateToTab?.('plants')} />
+          <StatCard title="Services" value={dashboardData.totalServices} icon="settings-outline" color="#f59e0b" onPress={() => onNavigateToTab?.('services')} />
           <StatCard title="Revenue" value={formatCurrency(dashboardData.totalRevenue)} icon="cash-outline" color="#8b5cf6" />
         </View>
 
         {/* Report Selector */}
         <View style={styles.dropdownContainer}>
           <Text style={styles.dropdownLabel}>Select Report</Text>
-          <View style={styles.dropdownWrapper}>
+          <View style={styles.dropdownWrapper} {...reportPanResponder.current.panHandlers}>
             <TouchableOpacity 
               style={[styles.dropdownItem, selectedReport === 'district' && styles.dropdownItemActive]}
-              onPress={() => setSelectedReport('district')}
+              onPress={() => changeReport('district')}
             >
               <Text style={[styles.dropdownText, selectedReport === 'district' && styles.dropdownTextActive]}>District Wise</Text>
             </TouchableOpacity>
             <TouchableOpacity 
               style={[styles.dropdownItem, selectedReport === 'revenue' && styles.dropdownItemActive]}
-              onPress={() => setSelectedReport('revenue')}
+              onPress={() => changeReport('revenue')}
             >
               <Text style={[styles.dropdownText, selectedReport === 'revenue' && styles.dropdownTextActive]}>Revenue Trend</Text>
             </TouchableOpacity>
             <TouchableOpacity 
               style={[styles.dropdownItem, selectedReport === 'status' && styles.dropdownItemActive]}
-              onPress={() => setSelectedReport('status')}
+              onPress={() => changeReport('status')}
             >
               <Text style={[styles.dropdownText, selectedReport === 'status' && styles.dropdownTextActive]}>Status Wise</Text>
             </TouchableOpacity>
@@ -559,7 +804,13 @@ export default function AdminDashboardScreen({ navigation }) {
         </View>
 
         {/* Chart Section */}
-        <View style={styles.chartSection}>
+        <View style={styles.chartSection} {...reportPanResponder.current.panHandlers}>
+          <Animated.View
+            style={[
+              styles.reportContent,
+              { transform: [{ translateX: reportSlide }] },
+            ]}
+          >
           {selectedReport === 'district' && sortedDistricts.length > 0 ? (
             <>
               <Text style={styles.chartTitle}>Services by District</Text>
@@ -576,54 +827,43 @@ export default function AdminDashboardScreen({ navigation }) {
             </View>
           )}
 
-          {selectedReport === 'revenue' && dashboardData.monthlyRevenue?.length > 0 ? (
+          {selectedReport === 'revenue' && revenueMonths.length > 0 ? (
             <>
               <Text style={styles.chartTitle}>Monthly Revenue Trend</Text>
-              <Text style={styles.chartSubtitle}>Tap on any point to view services</Text>
-              <LineChart
-                data={revenueData}
-                width={width - 48}
-                height={220}
-                chartConfig={{
-                  backgroundColor: '#ffffff',
-                  backgroundGradientFrom: '#ffffff',
-                  backgroundGradientTo: '#ffffff',
-                  decimalPlaces: 0,
-                  color: (opacity = 1) => `rgba(59, 130, 246, ${opacity})`,
-                  labelColor: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
-                  style: { borderRadius: 16 },
-                }}
-                bezier
-                onDataPointClick={(data) => {
-                  const item = dashboardData.monthlyRevenue[data.index];
-                  if (item) {
-                    let year = '', month = '';
-                    if (item.monthKey) {
-                      [year, month] = item.monthKey.split('-');
-                    } else if (item.month) {
-                      const parts = item.month.split(' ');
-                      month = parts[0];
-                      year = parts[1];
-                    }
-                    if (year && month) {
-                      handleRevenueClick(month, year);
-                    }
+              <Text style={styles.chartSubtitle}>
+                {revenuePeriodLabel} · Completed services · Tap a bar for details
+              </Text>
+              <RevenueBarChart
+                data={revenueMonths}
+                width={width - 64}
+                formatMonth={formatRevenueMonth}
+                formatValue={formatCompactCurrency}
+                onBarPress={(item) => {
+                  let year = '', month = '';
+                  if (item.monthKey) {
+                    [year, month] = item.monthKey.split('-');
+                  } else if (item.month) {
+                    const parts = item.month.split(' ');
+                    month = parts[0];
+                    year = parts[1];
+                  }
+                  if (year && month) {
+                    handleRevenueClick(month, year, item.revenue);
                   }
                 }}
-                style={styles.chart}
               />
               <View style={styles.revenueStats}>
                 <View style={styles.revenueStat}>
-                  <Text style={styles.revenueStatLabel}>Highest</Text>
-                  <Text style={styles.revenueStatValue}>{formatCurrency(Math.max(...dashboardData.monthlyRevenue.map(r => r.revenue || 0)))}</Text>
+                  <Text style={styles.revenueStatLabel}>Highest month</Text>
+                  <Text style={styles.revenueStatValue}>{formatCurrency(Math.max(...revenueMonths.map(r => r.revenue || 0)))}</Text>
                 </View>
                 <View style={styles.revenueStat}>
-                  <Text style={styles.revenueStatLabel}>Average</Text>
-                  <Text style={styles.revenueStatValue}>{formatCurrency(dashboardData.monthlyRevenue.reduce((s, r) => s + (r.revenue || 0), 0) / dashboardData.monthlyRevenue.length)}</Text>
+                  <Text style={styles.revenueStatLabel}>Monthly average</Text>
+                  <Text style={styles.revenueStatValue}>{formatCurrency(revenueMonths.reduce((s, r) => s + (r.revenue || 0), 0) / revenueMonths.length)}</Text>
                 </View>
                 <View style={styles.revenueStat}>
-                  <Text style={styles.revenueStatLabel}>Total</Text>
-                  <Text style={styles.revenueStatValue}>{formatCurrency(dashboardData.monthlyRevenue.reduce((s, r) => s + (r.revenue || 0), 0))}</Text>
+                  <Text style={styles.revenueStatLabel}>Total for period</Text>
+                  <Text style={styles.revenueStatValue}>{formatCurrency(revenueMonths.reduce((s, r) => s + (r.revenue || 0), 0))}</Text>
                 </View>
               </View>
             </>
@@ -638,37 +878,30 @@ export default function AdminDashboardScreen({ navigation }) {
             <>
               <Text style={styles.chartTitle}>Service Status Distribution</Text>
               <Text style={styles.chartSubtitle}>Tap on any slice to view services</Text>
-              <PieChart
+              <InteractivePieChart
                 data={statusData}
                 width={width - 48}
                 height={220}
-                chartConfig={{
-                  backgroundColor: '#ffffff',
-                  backgroundGradientFrom: '#ffffff',
-                  backgroundGradientTo: '#ffffff',
-                  decimalPlaces: 0,
-                  color: (opacity = 1) => `rgba(59, 130, 246, ${opacity})`,
-                  labelColor: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
-                  style: { borderRadius: 16 },
-                }}
-                accessor="count"
-                backgroundColor="transparent"
-                paddingLeft="15"
-                absolute
-                onDataPointClick={(data) => handleStatusClick(data.name)}
+                onSlicePress={handleStatusClick}
               />
             </>
           )}
+          </Animated.View>
         </View>
       </ScrollView>
 
       {/* Services List Modal - IMPROVED TABLE */}
-      <Modal visible={showModal} transparent animationType="slide" onRequestClose={() => setShowModal(false)}>
+      <Modal
+        visible={showModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => showDetailModal ? setShowDetailModal(false) : closeServicesModal()}
+      >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalHeaderTitle}>{modalTitle}</Text>
-              <TouchableOpacity onPress={() => setShowModal(false)}>
+              <TouchableOpacity onPress={closeServicesModal}>
                 <Ionicons name="close" size={24} color="#64748b" />
               </TouchableOpacity>
             </View>
@@ -692,12 +925,16 @@ export default function AdminDashboardScreen({ navigation }) {
                 <Text style={styles.modalCenterText}>No services found</Text>
               </View>
             )}
+            <ServiceDetailSheet
+              visible={showDetailModal}
+              data={detailData}
+              loading={detailLoading}
+              onClose={() => setShowDetailModal(false)}
+            />
           </View>
         </View>
       </Modal>
 
-      {/* Service Detail Modal */}
-      <ServiceDetailModal visible={showDetailModal} data={detailData} loading={detailLoading} onClose={() => setShowDetailModal(false)} />
     </SafeAreaView>
   );
 }
@@ -729,10 +966,22 @@ const styles = StyleSheet.create({
   dropdownTextActive: { color: '#fff' },
   
   // Chart
-  chartSection: { backgroundColor: '#fff', marginHorizontal: 16, marginTop: 16, marginBottom: 20, borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#e2e8f0' },
+  chartSection: { backgroundColor: '#fff', marginHorizontal: 16, marginTop: 16, marginBottom: 20, borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#e2e8f0', overflow: 'hidden' },
+  reportContent: { width: '100%' },
   chartTitle: { fontSize: 15, fontWeight: '600', color: '#0f172a', textAlign: 'center' },
   chartSubtitle: { fontSize: 11, color: '#94a3b8', textAlign: 'center', marginBottom: 12 },
-  chart: { borderRadius: 12, marginVertical: 8 },
+  revenueBarChart: { marginVertical: 8, alignSelf: 'center' },
+  revenueBarChartBody: { flexDirection: 'row', alignItems: 'center' },
+  revenueYAxis: { width: 52, justifyContent: 'space-between', paddingVertical: 2, marginRight: 8 },
+  revenueYAxisLabel: { fontSize: 9, color: '#64748b', textAlign: 'right' },
+  revenuePlotColumn: { flex: 1, minWidth: 0 },
+  revenuePlot: { position: 'relative', borderBottomWidth: 1, borderBottomColor: '#cbd5e1' },
+  revenueGridLine: { position: 'absolute', left: 0, right: 0, height: 1, backgroundColor: '#e2e8f0' },
+  revenueBars: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, flexDirection: 'row', paddingHorizontal: 2 },
+  revenueBarColumn: { flex: 1, alignItems: 'center', justifyContent: 'flex-end' },
+  revenueBar: { width: 20, backgroundColor: '#3b82f6', borderTopLeftRadius: 5, borderTopRightRadius: 5 },
+  revenueMonthLabels: { flexDirection: 'row', paddingHorizontal: 2, marginTop: 8 },
+  revenueMonthLabel: { flex: 1, minWidth: 0, fontSize: 10, color: '#64748b', textAlign: 'center' },
   
   horizontalChartContainer: { marginTop: 10, marginBottom: 10 },
   horizontalBarRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
@@ -751,7 +1000,7 @@ const styles = StyleSheet.create({
   
   // Modal
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalContainer: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: height * 0.85 },
+  modalContainer: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: height * 0.68, position: 'relative', overflow: 'hidden' },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   modalHeaderTitle: { fontSize: 18, fontWeight: '600', color: '#0f172a' },
   modalList: { padding: 16 },
@@ -764,22 +1013,24 @@ const styles = StyleSheet.create({
     alignItems: 'center', 
     paddingVertical: 14, 
     paddingHorizontal: 16, 
+    columnGap: 8,
     backgroundColor: '#f1f5f9', 
     borderRadius: 10, 
     marginBottom: 8
   },
   headerText: { fontSize: 12, fontWeight: '600', color: '#475569' },
-  headerId: { width: 80 },
-  headerPlant: { flex: 2 },
-  headerStatus: { width: 90 },
-  headerDate: { width: 105 },
-  headerArrow: { width: 30 },
+  headerId: { width: (width - 96) * 0.22 },
+  headerPlant: { flex: 1, minWidth: 0 },
+  headerStatus: { width: (width - 96) * 0.2 },
+  headerDate: { width: (width - 96) * 0.24 },
+  headerArrow: { width: (width - 96) * 0.06 },
   
   modalTableRow: { 
     flexDirection: 'row', 
     alignItems: 'center', 
     paddingVertical: 14, 
     paddingHorizontal: 16,
+    columnGap: 8,
     backgroundColor: '#fff',
     borderRadius: 8,
     marginBottom: 6,
@@ -787,16 +1038,16 @@ const styles = StyleSheet.create({
     borderColor: '#f1f5f9'
   },
   
-  cellId: { width: 80 },
-  cellPlant: { flex: 2 },
-  cellStatus: { width: 90 },
-  cellDate: { width: 105 },
-  cellArrow: { width: 30, alignItems: 'flex-end' },
+  cellId: { width: (width - 96) * 0.22 },
+  cellPlant: { flex: 1, minWidth: 0 },
+  cellStatus: { width: (width - 96) * 0.2 },
+  cellDate: { width: (width - 96) * 0.24 },
+  cellArrow: { width: (width - 96) * 0.06, alignItems: 'flex-end' },
   
-  cellIdText: { fontSize: 13, fontWeight: '600', color: '#3b82f6' },
-  cellPlantText: { fontSize: 13, color: '#334155' },
-  cellStatusText: { fontSize: 13, fontWeight: '600' },
-  cellDateText: { fontSize: 12, color: '#64748b' },
+  cellIdText: { fontSize: 12, fontWeight: '600', color: '#3b82f6', flexShrink: 1 },
+  cellPlantText: { fontSize: 12, color: '#334155', flexShrink: 1 },
+  cellStatusText: { fontSize: 10, fontWeight: '600' },
+  cellDateText: { fontSize: 11, color: '#64748b' },
   
   // Parts Table
   partsTableHeader: { flexDirection: 'row', backgroundColor: '#E3F2FD', paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8, marginBottom: 4 },
@@ -816,8 +1067,8 @@ const styles = StyleSheet.create({
   partsCellTotal: { width: 90, textAlign: 'right', fontWeight: '600', color: '#2e7d32' },
   
   // Detail Modal
-  detailOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
-  detailModal: { backgroundColor: '#fff', borderRadius: 20, width: width * 0.92, maxHeight: height * 0.85, overflow: 'hidden' },
+  detailOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end', zIndex: 10, elevation: 10 },
+  detailModal: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, width: '100%', maxHeight: '92%', flexShrink: 1, overflow: 'hidden' },
   detailHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   detailTitle: { fontSize: 18, fontWeight: '600', color: '#0f172a' },
   detailBody: { padding: 16 },
@@ -846,4 +1097,9 @@ const styles = StyleSheet.create({
   
   detailNoEquipment: { padding: 30, alignItems: 'center' },
   detailNoEquipmentText: { fontSize: 13, color: '#999' },
+  statusChartContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', alignSelf: 'center' },
+  statusChartLegend: { flex: 1, paddingLeft: 12, gap: 12 },
+  statusChartLegendItem: { flexDirection: 'row', alignItems: 'center', minHeight: 32 },
+  statusChartLegendDot: { width: 12, height: 12, borderRadius: 6, marginRight: 8 },
+  statusChartLegendText: { fontSize: 13, color: '#334155', fontWeight: '500' },
 });

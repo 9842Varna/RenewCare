@@ -1353,7 +1353,7 @@ public class AdminService {
                 res.put("customerName", rs.getString("CustomerName"));
                 res.put("requestDate", rs.getString("RequestDate"));
                 res.put("serviceDate", rs.getString("ServiceDate"));
-                res.put("status", rs.getString("Status"));
+                res.put("serviceRequestStatus", rs.getString("Status"));
                 res.put("problem", rs.getString("ProblemDescription"));
                 res.put("receivedBy", rs.getString("ReceivedByName"));
             }

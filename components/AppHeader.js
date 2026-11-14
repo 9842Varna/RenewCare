@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Image, StatusBar, Platform } 
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-export default function AppHeader({ user, onLogout }) {
+export default function AppHeader({ user, onLogout, onProfilePress }) {
   const [currentDateTime, setCurrentDateTime] = useState('');
   const [employeeProfilePic, setEmployeeProfilePic] = useState(null);
   const insets = useSafeAreaInsets();
@@ -39,7 +39,13 @@ export default function AppHeader({ user, onLogout }) {
       <StatusBar backgroundColor="#1976d2" barStyle="light-content" translucent={true} />
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <View style={styles.headerLeft}>
-          <View style={styles.profileContainer}>
+          <TouchableOpacity
+            style={styles.profileContainer}
+            onPress={onProfilePress}
+            activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel="Open profile"
+          >
             {employeeProfilePic ? (
               <Image 
                 source={{ uri: employeeProfilePic }} 
@@ -51,7 +57,7 @@ export default function AppHeader({ user, onLogout }) {
                 <Text style={styles.profileInitial}>{user?.name?.charAt(0) || 'U'}</Text>
               </View>
             )}
-          </View>
+          </TouchableOpacity>
           <View>
             <Text style={styles.headerTitle}>RenewCare</Text>
             <Text style={styles.employeeName}>Welcome, {user?.name || 'Employee'}!</Text>
