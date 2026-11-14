@@ -20,6 +20,7 @@ import * as ImagePicker from 'expo-image-picker';
 
 //const API_BASE = 'http://10.196.32.8:2927/api';
 const API_BASE = 'http://192.168.29.223:2927/api';
+const MAX_PROFILE_IMAGE_SIZE_BYTES = 1024 * 1024;
 
 export default function ProfileScreen({ user, onLogout, hideHeader = true, compact = false, onProfileUpdated }) {
   const profileImageWrapperRef = useRef(null);
@@ -30,7 +31,8 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true, compa
   const [uploadingImage, setUploadingImage] = useState(false);
   const [showImageOptionsModal, setShowImageOptionsModal] = useState(false);
   const [imageOptionsPosition, setImageOptionsPosition] = useState({ top: 0, left: 12 });
-  const [showEditModal, setShowEditModal] = useState(false);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
   const [editData, setEditData] = useState({
     name: '',
     gender: '',
@@ -101,8 +103,8 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true, compa
       quality: 0.5,
     });
     
-    if (!result.canceled) {
-      uploadProfileImage(result.assets[0].uri);
+    if (!result.canceled && result.assets?.[0]) {
+      uploadProfileImage(result.assets[0]);
     }
   };
 
@@ -119,8 +121,8 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true, compa
       quality: 0.5,
     });
     
-    if (!result.canceled) {
-      uploadProfileImage(result.assets[0].uri);
+    if (!result.canceled && result.assets?.[0]) {
+      uploadProfileImage(result.assets[0]);
     }
   };
 
@@ -162,7 +164,18 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true, compa
     );
   };
 
-  const uploadProfileImage = async (uri) => {
+  const uploadProfileImage = async (asset) => {
+    const uri = asset?.uri;
+    if (!uri) {
+      Alert.alert('Upload failed', 'The selected photo could not be opened. Please choose another photo.');
+      return;
+    }
+
+    if (asset.fileSize > MAX_PROFILE_IMAGE_SIZE_BYTES) {
+      Alert.alert('Image too large', 'Choose a photo that is 1 MB or smaller.');
+      return;
+    }
+
     setUploadingImage(true);
     try {
       let empId = user?.id;
@@ -172,33 +185,63 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true, compa
           empId = JSON.parse(empData).id;
         }
       }
+
+      if (!empId) {
+        Alert.alert('Upload failed', 'Employee ID is missing. Please sign in again and retry.');
+        return;
+      }
       
       const formData = new FormData();
-      const filename = uri.split('/').pop();
+      const filename = uri.split('/').pop()?.split('?')[0] || 'profile.jpg';
       const match = /\.(\w+)$/.exec(filename);
-      const type = match ? `image/${match[1]}` : 'image/jpeg';
+      const extension = match?.[1]?.toLowerCase();
+      const type = extension === 'png' ? 'image/png' : 'image/jpeg';
       
       formData.append('file', {
-        uri: uri,
+        uri,
         name: filename,
         type: type,
       });
       formData.append('empId', empId);
       
-      const response = await axios.post(`${API_BASE}/profile/update-image`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
+      const response = await fetch(`${API_BASE}/profile/update-image`, {
+        method: 'POST',
+        body: formData,
       });
-      
-      if (response.data.status === 'success') {
-        const imageUrl = `${API_BASE}/profile/image/${empId}?t=${Date.now()}`;
-        setProfileImage(imageUrl);
-        onProfileUpdated?.({ profile_pic: imageUrl, profileImage: imageUrl });
-        Alert.alert('Success', 'Profile picture updated!');
+      const responseText = await response.text();
+      let responseData;
+
+      try {
+        responseData = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        responseData = { message: responseText };
       }
-    } catch (e) {
-      Alert.alert('Error', 'Failed to upload image');
+
+      if (!response.ok || responseData.status !== 'success') {
+        const uploadError = new Error(responseData.message || `Upload failed (${response.status}).`);
+        uploadError.status = response.status;
+        throw uploadError;
+      }
+
+      const imageUrl = `${API_BASE}/profile/image/${empId}?t=${Date.now()}`;
+      setProfileImage(imageUrl);
+      onProfileUpdated?.({ profile_pic: imageUrl, profileImage: imageUrl });
+      Alert.alert('Success', 'Profile picture updated!');
+    } catch (error) {
+      const errorStatus = error.status || error.response?.status;
+      const errorMessage = error.message || 'Please try again.';
+      const sizeLimitExceeded = errorStatus === 413
+        || /maximum upload size|payload too large|request entity too large/i.test(errorMessage);
+      const networkError = !errorStatus && /network request failed|network error/i.test(errorMessage);
+      console.error('Profile image upload failed:', errorStatus, error.response?.data || errorMessage);
+      Alert.alert(
+        sizeLimitExceeded ? 'Image too large' : networkError ? 'Connection failed' : 'Upload failed',
+        sizeLimitExceeded
+          ? 'Choose a photo that is 1 MB or smaller.'
+          : networkError
+            ? 'Could not reach the server. Check that the phone and server are on the same Wi-Fi, then retry.'
+            : errorMessage
+      );
     } finally {
       setUploadingImage(false);
     }
@@ -231,6 +274,7 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true, compa
   };
 
   const handleUpdateProfile = async () => {
+    setSavingProfile(true);
     try {
       let empId = user?.id;
       if (!empId) {
@@ -260,12 +304,29 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true, compa
           email: updateData.email,
           phone: updateData.phone,
         });
-        setShowEditModal(false);
+        setIsEditingProfile(false);
         loadEmployeeProfile();
+      } else {
+        Alert.alert('Error', response.data.message || 'Failed to update profile.');
       }
-    } catch (e) {
-      Alert.alert('Error', 'Failed to update profile');
+    } catch (error) {
+      Alert.alert('Error', error.response?.data?.message || error.message || 'Failed to update profile.');
+    } finally {
+      setSavingProfile(false);
     }
+  };
+
+  const cancelProfileEdit = () => {
+    setEditData({
+      name: employeeData?.name || user?.name || '',
+      gender: employeeData?.gender || '',
+      email: employeeData?.email || user?.email || '',
+      phone: employeeData?.phone || user?.phone || '',
+      address1: employeeData?.address1 || '',
+      address2: employeeData?.address2 || '',
+      talukName: employeeData?.talukName || '',
+    });
+    setIsEditingProfile(false);
   };
 
   const getGenderIcon = (gender) => {
@@ -287,7 +348,6 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true, compa
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
       <StatusBar backgroundColor="#1976d2" barStyle="light-content" />
       
-      {/* Profile Header - Left aligned with profile pic and details in one line */}
       <View style={styles.profileHeader}>
         <TouchableOpacity
           ref={profileImageWrapperRef}
@@ -316,14 +376,26 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true, compa
           <Text style={styles.profileIdHeader}>ID: {employeeData?.id || user?.id || 'N/A'}</Text>
         </View>
         
-        <TouchableOpacity style={styles.editIconBtn} onPress={() => setShowEditModal(true)}>
-          <Ionicons name="create-outline" size={22} color="#2b78c5" />
-        </TouchableOpacity>
       </View>
 
       {/* Profile Details Card */}
       <View style={styles.detailsCard}>
-        <Text style={styles.cardTitle}>{compact ? 'Contact Details' : 'Profile Details'}</Text>
+        <View style={styles.cardHeaderRow}>
+          <Text style={[styles.cardTitle, styles.cardTitleNoMargin]}>
+            {compact ? 'Contact Details' : 'Profile Details'}
+          </Text>
+          {!compact && !isEditingProfile && (
+            <TouchableOpacity
+              style={styles.inlineEditButton}
+              onPress={() => setIsEditingProfile(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Edit profile details"
+            >
+              <Ionicons name="create-outline" size={16} color="#2b78c5" />
+              <Text style={styles.inlineEditButtonText}>Edit</Text>
+            </TouchableOpacity>
+          )}
+        </View>
         
         {!compact && (
           <View style={styles.detailRow}>
@@ -332,7 +404,17 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true, compa
             </View>
             <View style={styles.detailContent}>
               <Text style={styles.detailLabel}>Full Name</Text>
-              <Text style={styles.detailValue}>{employeeData?.name || 'Not set'}</Text>
+              {isEditingProfile ? (
+                <TextInput
+                  style={styles.inlineEditInput}
+                  value={editData.name}
+                  onChangeText={(text) => setEditData(current => ({ ...current, name: text }))}
+                  placeholder="Enter your full name"
+                  placeholderTextColor="#94a3b8"
+                />
+              ) : (
+                <Text style={styles.detailValue}>{employeeData?.name || 'Not set'}</Text>
+              )}
             </View>
           </View>
         )}
@@ -343,7 +425,19 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true, compa
           </View>
           <View style={styles.detailContent}>
             <Text style={styles.detailLabel}>Email Address</Text>
-            <Text style={styles.detailValue}>{employeeData?.email || 'Not set'}</Text>
+            {isEditingProfile ? (
+              <TextInput
+                style={styles.inlineEditInput}
+                value={editData.email}
+                onChangeText={(text) => setEditData(current => ({ ...current, email: text }))}
+                placeholder="Enter email address"
+                placeholderTextColor="#94a3b8"
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+            ) : (
+              <Text style={styles.detailValue}>{employeeData?.email || 'Not set'}</Text>
+            )}
           </View>
         </View>
         
@@ -353,7 +447,18 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true, compa
           </View>
           <View style={styles.detailContent}>
             <Text style={styles.detailLabel}>Phone Number</Text>
-            <Text style={styles.detailValue}>{employeeData?.phone || 'Not set'}</Text>
+            {isEditingProfile ? (
+              <TextInput
+                style={styles.inlineEditInput}
+                value={editData.phone}
+                onChangeText={(text) => setEditData(current => ({ ...current, phone: text }))}
+                placeholder="Enter phone number"
+                placeholderTextColor="#94a3b8"
+                keyboardType="phone-pad"
+              />
+            ) : (
+              <Text style={styles.detailValue}>{employeeData?.phone || 'Not set'}</Text>
+            )}
           </View>
         </View>
         
@@ -382,9 +487,41 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true, compa
             </View>
             <View style={styles.detailContent}>
               <Text style={styles.detailLabel}>Gender</Text>
-              <Text style={styles.detailValue}>
-                {employeeData?.gender === 'M' ? 'Male' : employeeData?.gender === 'F' ? 'Female' : 'Not set'}
-              </Text>
+              {isEditingProfile ? (
+                <View style={styles.inlineGenderContainer}>
+                  {[
+                    { value: 'M', label: 'Male', icon: 'male-outline' },
+                    { value: 'F', label: 'Female', icon: 'female-outline' },
+                  ].map(option => (
+                    <TouchableOpacity
+                      key={option.value}
+                      style={[
+                        styles.inlineGenderOption,
+                        editData.gender === option.value && styles.inlineGenderOptionSelected,
+                      ]}
+                      onPress={() => setEditData(current => ({ ...current, gender: option.value }))}
+                    >
+                      <Ionicons
+                        name={option.icon}
+                        size={16}
+                        color={editData.gender === option.value ? '#2b78c5' : '#64748b'}
+                      />
+                      <Text
+                        style={[
+                          styles.inlineGenderText,
+                          editData.gender === option.value && styles.inlineGenderTextSelected,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : (
+                <Text style={styles.detailValue}>
+                  {employeeData?.gender === 'M' ? 'Male' : employeeData?.gender === 'F' ? 'Female' : 'Not set'}
+                </Text>
+              )}
             </View>
           </View>
         )}
@@ -419,7 +556,9 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true, compa
 
       {/* Address Card */}
       {!compact && <View style={styles.detailsCard}>
-        <Text style={styles.cardTitle}>Address Information</Text>
+        <View style={styles.cardHeaderRow}>
+          <Text style={[styles.cardTitle, styles.cardTitleNoMargin]}>Address Information</Text>
+        </View>
         
         <View style={styles.detailRow}>
           <View style={styles.detailIcon}>
@@ -427,7 +566,17 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true, compa
           </View>
           <View style={styles.detailContent}>
             <Text style={styles.detailLabel}>Street Address</Text>
-            <Text style={styles.detailValue}>{employeeData?.address1 || 'Not set'}</Text>
+            {isEditingProfile ? (
+              <TextInput
+                style={styles.inlineEditInput}
+                value={editData.address1}
+                onChangeText={(text) => setEditData(current => ({ ...current, address1: text }))}
+                placeholder="Enter street address"
+                placeholderTextColor="#94a3b8"
+              />
+            ) : (
+              <Text style={styles.detailValue}>{employeeData?.address1 || 'Not set'}</Text>
+            )}
           </View>
         </View>
         
@@ -437,7 +586,17 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true, compa
           </View>
           <View style={styles.detailContent}>
             <Text style={styles.detailLabel}>Area</Text>
-            <Text style={styles.detailValue}>{employeeData?.address2 || 'Not set'}</Text>
+            {isEditingProfile ? (
+              <TextInput
+                style={styles.inlineEditInput}
+                value={editData.address2}
+                onChangeText={(text) => setEditData(current => ({ ...current, address2: text }))}
+                placeholder="Enter area"
+                placeholderTextColor="#94a3b8"
+              />
+            ) : (
+              <Text style={styles.detailValue}>{employeeData?.address2 || 'Not set'}</Text>
+            )}
           </View>
         </View>
         
@@ -447,7 +606,17 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true, compa
           </View>
           <View style={styles.detailContent}>
             <Text style={styles.detailLabel}>Taluk / City</Text>
-            <Text style={styles.detailValue}>{employeeData?.talukName || 'Not set'}</Text>
+            {isEditingProfile ? (
+              <TextInput
+                style={styles.inlineEditInput}
+                value={editData.talukName}
+                onChangeText={(text) => setEditData(current => ({ ...current, talukName: text }))}
+                placeholder="Enter taluk or city"
+                placeholderTextColor="#94a3b8"
+              />
+            ) : (
+              <Text style={styles.detailValue}>{employeeData?.talukName || 'Not set'}</Text>
+            )}
           </View>
         </View>
         
@@ -470,6 +639,25 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true, compa
             <Text style={styles.detailValue}>{employeeData?.districtName || 'Not set'}</Text>
           </View>
         </View>
+
+        {isEditingProfile && (
+          <View style={styles.inlineEditActions}>
+            <TouchableOpacity style={styles.inlineCancelButton} onPress={cancelProfileEdit}>
+              <Text style={styles.inlineCancelButtonText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.inlineSaveButton, savingProfile && styles.inlineSaveButtonDisabled]}
+              onPress={handleUpdateProfile}
+              disabled={savingProfile}
+            >
+              {savingProfile ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <Text style={styles.inlineSaveButtonText}>Save Changes</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
       </View>}
 
       <View style={styles.footerSpace} />
@@ -550,124 +738,6 @@ export default function ProfileScreen({ user, onLogout, hideHeader = true, compa
         </View>
       </Modal>
 
-      {/* Edit Profile Modal */}
-      <Modal
-        visible={showEditModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowEditModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Edit Profile</Text>
-              <TouchableOpacity onPress={() => setShowEditModal(false)}>
-                <Ionicons name="close" size={24} color="#666" />
-              </TouchableOpacity>
-            </View>
-            
-            <ScrollView style={styles.modalBody}>
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Full Name</Text>
-                <TextInput
-                  style={styles.input}
-                  value={editData.name}
-                  onChangeText={(text) => setEditData({ ...editData, name: text })}
-                  placeholder="Enter your full name"
-                  placeholderTextColor="#999"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Email Address</Text>
-                <TextInput
-                  style={styles.input}
-                  value={editData.email}
-                  onChangeText={(text) => setEditData({ ...editData, email: text })}
-                  placeholder="Enter email address"
-                  placeholderTextColor="#999"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Phone Number</Text>
-                <TextInput
-                  style={styles.input}
-                  value={editData.phone}
-                  onChangeText={(text) => setEditData({ ...editData, phone: text })}
-                  placeholder="Enter phone number"
-                  placeholderTextColor="#999"
-                  keyboardType="phone-pad"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Street Address</Text>
-                <TextInput
-                  style={styles.input}
-                  value={editData.address1}
-                  onChangeText={(text) => setEditData({ ...editData, address1: text })}
-                  placeholder="Enter street address"
-                  placeholderTextColor="#999"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Area</Text>
-                <TextInput
-                  style={styles.input}
-                  value={editData.address2}
-                  onChangeText={(text) => setEditData({ ...editData, address2: text })}
-                  placeholder="Enter area"
-                  placeholderTextColor="#999"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Taluk / City</Text>
-                <TextInput
-                  style={styles.input}
-                  value={editData.talukName}
-                  onChangeText={(text) => setEditData({ ...editData, talukName: text })}
-                  placeholder="Enter taluk or city"
-                  placeholderTextColor="#999"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Gender</Text>
-                <View style={styles.genderContainer}>
-                  <TouchableOpacity 
-                    style={[styles.genderOption, editData.gender === 'M' && styles.genderSelected]} 
-                    onPress={() => setEditData({ ...editData, gender: 'M' })}
-                  >
-                    <Ionicons name="male-outline" size={20} color={editData.gender === 'M' ? '#2b78c5' : '#666'} />
-                    <Text style={[styles.genderOptionText, editData.gender === 'M' && styles.genderSelectedText]}>Male</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity 
-                    style={[styles.genderOption, editData.gender === 'F' && styles.genderSelected]} 
-                    onPress={() => setEditData({ ...editData, gender: 'F' })}
-                  >
-                    <Ionicons name="female-outline" size={20} color={editData.gender === 'F' ? '#2b78c5' : '#666'} />
-                    <Text style={[styles.genderOptionText, editData.gender === 'F' && styles.genderSelectedText]}>Female</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </ScrollView>
-            
-            <View style={styles.modalFooter}>
-              <TouchableOpacity style={styles.cancelButton} onPress={() => setShowEditModal(false)}>
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.saveButton} onPress={handleUpdateProfile}>
-                <Text style={styles.saveButtonText}>Save Changes</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </ScrollView>
   );
 }
@@ -688,24 +758,23 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
   },
-  // New Profile Header - Left aligned with profile pic
   profileHeader: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     alignItems: 'center',
     backgroundColor: '#fff',
     paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingVertical: 24,
     borderBottomWidth: 1,
     borderBottomColor: '#e8eaed',
-    gap: 12,
+    gap: 10,
   },
   profileImageWrapper: {
     position: 'relative',
   },
   profileImageSmall: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 112,
+    height: 112,
+    borderRadius: 56,
     backgroundColor: '#E8F1FA',
     justifyContent: 'center',
     alignItems: 'center',
@@ -717,34 +786,31 @@ const styles = StyleSheet.create({
     bottom: 0,
     right: 0,
     backgroundColor: '#2b78c5',
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1.5,
     borderColor: '#fff',
   },
   profileInfo: {
-    flex: 1,
+    alignItems: 'center',
   },
   profileNameHeader: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: 'bold',
     color: '#1a237e',
     marginBottom: 2,
   },
   profileRoleHeader: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#666',
     marginBottom: 2,
   },
   profileIdHeader: {
-    fontSize: 10,
+    fontSize: 11,
     color: '#999',
-  },
-  editIconBtn: {
-    padding: 8,
   },
   detailsCard: {
     backgroundColor: '#fff',
@@ -766,6 +832,71 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3,
     borderLeftColor: '#2b78c5',
     paddingLeft: 10,
+  },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  cardTitleNoMargin: {
+    flex: 1,
+    marginBottom: 0,
+  },
+  inlineEditButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#eaf3ff',
+  },
+  inlineEditButtonText: {
+    color: '#2b78c5',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  inlineEditInput: {
+    minHeight: 36,
+    marginTop: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#d8e2ee',
+    borderRadius: 8,
+    backgroundColor: '#f8fafc',
+    fontSize: 14,
+    color: '#1e293b',
+  },
+  inlineGenderContainer: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 6,
+  },
+  inlineGenderOption: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#d8e2ee',
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+  },
+  inlineGenderOptionSelected: {
+    borderColor: '#2b78c5',
+    backgroundColor: '#eaf3ff',
+  },
+  inlineGenderText: {
+    color: '#64748b',
+    fontSize: 12,
+  },
+  inlineGenderTextSelected: {
+    color: '#2b78c5',
+    fontWeight: '600',
   },
   detailRow: {
     flexDirection: 'row',
@@ -789,6 +920,42 @@ const styles = StyleSheet.create({
     color: '#333',
     fontWeight: '500',
     marginTop: 2,
+  },
+  inlineEditActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 8,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#edf0f4',
+  },
+  inlineCancelButton: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#f1f5f9',
+  },
+  inlineCancelButtonText: {
+    color: '#475569',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  inlineSaveButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#2b78c5',
+  },
+  inlineSaveButtonDisabled: {
+    opacity: 0.6,
+  },
+  inlineSaveButtonText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '600',
   },
   footerSpace: {
     height: 30,
@@ -856,111 +1023,5 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#dc2626',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    width: '90%',
-    maxHeight: '85%',
-    overflow: 'hidden',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-  },
-  modalBody: {
-    padding: 16,
-  },
-  inputGroup: {
-    marginBottom: 14,
-  },
-  inputLabel: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#555',
-    marginBottom: 4,
-  },
-  input: {
-    backgroundColor: '#f8f9fa',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 13,
-    color: '#333',
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-  },
-  genderContainer: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  genderOption: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    gap: 6,
-  },
-  genderSelected: {
-    backgroundColor: '#E8F1FA',
-    borderColor: '#2b78c5',
-  },
-  genderOptionText: {
-    fontSize: 13,
-    color: '#666',
-  },
-  genderSelectedText: {
-    color: '#2b78c5',
-    fontWeight: '500',
-  },
-  modalFooter: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    gap: 10,
-  },
-  cancelButton: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-    backgroundColor: '#f0f0f0',
-  },
-  cancelButtonText: {
-    color: '#666',
-    fontWeight: '500',
-    fontSize: 13,
-  },
-  saveButton: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-    backgroundColor: '#2b78c5',
-  },
-  saveButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 13,
   },
 });
