@@ -39,6 +39,7 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
   const [groupedPlants, setGroupedPlants] = useState([]);
   const [showNotificationDropdown, setShowNotificationDropdown] = useState(false);
   const [expandedPlants, setExpandedPlants] = useState({});
+  const [expandedServices, setExpandedServices] = useState({});
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
   const [selectedDate, setSelectedDate] = useState('');
   const [tempDate, setTempDate] = useState(new Date());
@@ -356,6 +357,13 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
     setExpandedPlants(prev => ({
       ...prev,
       [plantName]: !prev[plantName]
+    }));
+  };
+
+  const toggleService = (serviceId) => {
+    setExpandedServices(prev => ({
+      ...prev,
+      [serviceId]: !prev[serviceId]
     }));
   };
 
@@ -696,13 +704,14 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
                     </View>
                   </View>
                   
-                  {sortedServices.map((service, idx) => {
+                  {sortedServices.map(service => {
                     const allCompleted = service.equipmentList?.length > 0 && service.equipmentList?.every(eq => eq.status === 'C');
                     const totalEquipment = service.equipmentList?.length || 0;
-                    const completedEquipment = service.equipmentList?.filter(eq => eq.status === 'C').length || 0;
                     const isNewService = newServiceIds.has(String(service.id));
                     const statusText = getServiceStatusText(service);
                     const statusColor = getServiceStatusColor(service);
+                    const serviceKey = String(service.id);
+                    const isServiceExpanded = expandedServices[serviceKey];
                     
                     let displayEquipment = service.equipmentList || [];
                     if (selectedStatus === 'assigned') displayEquipment = displayEquipment.filter(eq => eq.status !== 'C');
@@ -712,90 +721,108 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
                     if (selectedStatus === 'completed' && !allCompleted) return null;
                     
                     return (
-                      <View key={idx} style={[styles.treeviewServiceItem, isNewService && styles.newServiceItem]}>
-                        {isNewService && (
-                          <View style={styles.newBadge}>
-                            <Text style={styles.newBadgeText}>NEW</Text>
+                      <View key={serviceKey} style={[styles.treeviewServiceItem, isNewService && styles.newServiceItem]}>
+                        <TouchableOpacity
+                          style={styles.serviceCompactRow}
+                          onPress={() => toggleService(serviceKey)}
+                          activeOpacity={0.7}
+                        >
+                          <View style={styles.serviceCompactInfo}>
+                            <View style={styles.serviceCompactTitleRow}>
+                              <Text style={styles.serviceId}>SR-{service.id}</Text>
+                              {isNewService && (
+                                <View style={styles.newBadge}>
+                                  <Text style={styles.newBadgeText}>NEW</Text>
+                                </View>
+                              )}
+                            </View>
+                            <Text style={styles.serviceCompactDate} numberOfLines={1}>
+                              Request: {service.date}
+                            </Text>
                           </View>
-                        )}
-                        
-                        <View style={styles.serviceItemHeader}>
-                          <View style={styles.serviceIdContainer}>
-                            <Ionicons name="qr-code-outline" size={14} color="#1976d2" />
-                            <Text style={styles.serviceId}>SR-{service.id}</Text>
+                          <View style={styles.serviceCompactMeta}>
+                            <View style={[styles.serviceStatusPill, { borderColor: statusColor }]}>
+                              <Text style={[styles.serviceStatusText, { color: statusColor }]} numberOfLines={1}>
+                                {statusText}
+                              </Text>
+                            </View>
+                            <Text style={styles.serviceCompactCount}>{totalEquipment} eq</Text>
+                            <Ionicons
+                              name={isServiceExpanded ? 'chevron-up' : 'chevron-down'}
+                              size={16}
+                              color="#64748b"
+                            />
                           </View>
-                          <Text style={[styles.serviceStatusText, { color: statusColor }]}>
-                            {statusText}
-                          </Text>
-                        </View>
-                        
-                        <View style={styles.serviceDateRow}>
-                          <Ionicons name="calendar-outline" size={10} color="#666" />
-                          <Text style={styles.serviceDate}>Request: {service.date}</Text>
-                        </View>
+                        </TouchableOpacity>
 
-                        {getServiceCompletionDate(service) && (
-                          <View style={styles.serviceDateRow}>
-                            <Ionicons name="checkmark-done-circle" size={10} color="#EF4444" />
-                            <Text style={[styles.serviceDate, { color: '#EF4444' }]}>Completed: {getServiceCompletionDate(service)}</Text>
-                          </View>
-                        )}
+                        {isServiceExpanded && (
+                          <View style={styles.serviceExpandedContent}>
+                            {getServiceCompletionDate(service) && (
+                              <View style={styles.serviceDateRow}>
+                                <Ionicons name="checkmark-done-circle" size={10} color="#EF4444" />
+                                <Text style={[styles.serviceDate, { color: '#EF4444' }]}>
+                                  Completed: {getServiceCompletionDate(service)}
+                                </Text>
+                              </View>
+                            )}
 
-                        <View style={styles.equipmentListContainer}>
-                          <Text style={styles.equipmentListTitle}>Equipment ({displayEquipment.length})</Text>
-                          {displayEquipment.map((eq, eqIdx) => {
-                            const isNewEquipment = isEquipmentNew(service, eq);
-                            
-                            return (
-                              <View key={eqIdx} style={[styles.equipmentListItem, isNewEquipment && styles.newEquipmentItem]}>
-                                <View style={styles.equipmentItemLeft}>
-                                  <View style={{ flex: 1 }}>
-                                    <View style={styles.equipmentNameRow}>
-                                      <Text style={styles.equipmentItemName}>{eq.name}</Text>
-                                      {isNewEquipment && (
-                                        <View style={styles.equipmentNewBadge}>
-                                          <Text style={styles.equipmentNewBadgeText}>NEW</Text>
+                            <View style={styles.equipmentListContainer}>
+                              <Text style={styles.equipmentListTitle}>Equipment ({displayEquipment.length})</Text>
+                              {displayEquipment.map((eq, eqIdx) => {
+                                const isNewEquipment = isEquipmentNew(service, eq);
+
+                                return (
+                                  <View key={eqIdx} style={[styles.equipmentListItem, isNewEquipment && styles.newEquipmentItem]}>
+                                    <View style={styles.equipmentItemLeft}>
+                                      <View style={{ flex: 1 }}>
+                                        <View style={styles.equipmentNameRow}>
+                                          <Text style={styles.equipmentItemName}>{eq.name}</Text>
+                                          {isNewEquipment && (
+                                            <View style={styles.equipmentNewBadge}>
+                                              <Text style={styles.equipmentNewBadgeText}>NEW</Text>
+                                            </View>
+                                          )}
                                         </View>
-                                      )}
+                                        <Text style={styles.equipmentItemModel}>Model: {eq.model || '-'}</Text>
+                                        {eq.status === 'C' && eq.parts && eq.parts.length > 0 && (
+                                          <View style={styles.partsSummary}>
+                                            <Ionicons name="cube-outline" size={10} color="#666" />
+                                            <Text style={styles.partsSummaryText}>{eq.parts.length} part(s) used</Text>
+                                          </View>
+                                        )}
+                                      </View>
                                     </View>
-                                    <Text style={styles.equipmentItemModel}>Model: {eq.model || '-'}</Text>
-                                    {eq.status === 'C' && eq.parts && eq.parts.length > 0 && (
-                                      <View style={styles.partsSummary}>
-                                        <Ionicons name="cube-outline" size={10} color="#666" />
-                                        <Text style={styles.partsSummaryText}>{eq.parts.length} part(s) used</Text>
+                                    {eq.status !== 'C' && (
+                                      <TouchableOpacity style={styles.updateSmallBtn} onPress={() => openUpdateService(service, eq)}>
+                                        <Ionicons name="create-outline" size={10} color="#fff" />
+                                        <Text style={styles.updateSmallBtnText}>Update</Text>
+                                      </TouchableOpacity>
+                                    )}
+                                    {eq.status === 'C' && (
+                                      <View style={styles.completedBadgeSmall}>
+                                        <Ionicons name="checkmark-circle" size={10} color="#EF4444" />
+                                        <Text style={styles.completedBadgeSmallText}>Done</Text>
                                       </View>
                                     )}
                                   </View>
-                                </View>
-                                {eq.status !== 'C' && (
-                                  <TouchableOpacity style={styles.updateSmallBtn} onPress={() => openUpdateService(service, eq)}>
-                                    <Ionicons name="create-outline" size={10} color="#fff" />
-                                    <Text style={styles.updateSmallBtnText}>Update</Text>
-                                  </TouchableOpacity>
-                                )}
-                                {eq.status === 'C' && (
-                                  <View style={styles.completedBadgeSmall}>
-                                    <Ionicons name="checkmark-circle" size={10} color="#EF4444" />
-                                    <Text style={styles.completedBadgeSmallText}>Done</Text>
-                                  </View>
-                                )}
+                                );
+                              })}
+                            </View>
+
+                            {!allCompleted && displayEquipment.length > 0 && (
+                              <View style={styles.footerLocked}>
+                                <Ionicons name="lock-closed-outline" size={10} color="#bbb" />
+                                <Text style={styles.footerLockedText}>Complete all equipment</Text>
                               </View>
-                            );
-                          })}
-                        </View>
+                            )}
 
-                        {!allCompleted && displayEquipment.length > 0 && (
-                          <View style={styles.footerLocked}>
-                            <Ionicons name="lock-closed-outline" size={10} color="#bbb" />
-                            <Text style={styles.footerLockedText}>Complete all equipment</Text>
+                            {allCompleted && (
+                              <TouchableOpacity style={styles.viewDetailsBtn} onPress={() => openPlantDetails(service)}>
+                                <Text style={styles.viewDetailsBtnText}>View Details</Text>
+                                <Ionicons name="document-text-outline" size={14} color="#1976d2" />
+                              </TouchableOpacity>
+                            )}
                           </View>
-                        )}
-
-                        {allCompleted && (
-                          <TouchableOpacity style={styles.viewDetailsBtn} onPress={() => openPlantDetails(service)}>
-                            <Text style={styles.viewDetailsBtnText}>View Details</Text>
-                            <Ionicons name="document-text-outline" size={14} color="#1976d2" />
-                          </TouchableOpacity>
                         )}
                       </View>
                     );
@@ -1220,13 +1247,18 @@ const styles = StyleSheet.create({
   treeviewStats: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, paddingVertical: 10, marginBottom: 8, borderBottomWidth: 1, borderBottomColor: '#eef2f6' },
   treeviewStat: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   treeviewStatText: { fontSize: 11, color: '#666' },
-  treeviewServiceItem: { backgroundColor: '#fff', borderRadius: 10, marginBottom: 10, padding: 12, borderWidth: 1, borderColor: '#f0f0f0', position: 'relative' },
-  newServiceItem: { borderColor: '#4CAF50', borderWidth: 2, backgroundColor: '#E8F5E9' },
-  newBadge: { position: 'absolute', top: -6, left: -6, backgroundColor: '#4CAF50', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, zIndex: 10 },
+  treeviewServiceItem: { backgroundColor: '#fff', borderRadius: 8, marginBottom: 7, borderWidth: 1, borderColor: '#e5eaf0', overflow: 'hidden' },
+  newServiceItem: { borderColor: '#81c784', backgroundColor: '#f5fbf6' },
+  newBadge: { backgroundColor: '#4CAF50', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 },
   newBadgeText: { color: '#fff', fontSize: 8, fontWeight: 'bold' },
-  
-  serviceItemHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  serviceIdContainer: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  serviceCompactRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 10, paddingVertical: 9, gap: 8, minHeight: 58 },
+  serviceCompactInfo: { flex: 1, minWidth: 0 },
+  serviceCompactTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  serviceCompactDate: { fontSize: 10, color: '#64748b', marginTop: 3 },
+  serviceCompactMeta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  serviceStatusPill: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 6, paddingVertical: 3, maxWidth: 82, backgroundColor: '#fff' },
+  serviceCompactCount: { fontSize: 10, color: '#64748b', minWidth: 30, textAlign: 'center' },
+  serviceExpandedContent: { borderTopWidth: 1, borderTopColor: '#eef2f6', paddingHorizontal: 10, paddingBottom: 8 },
   serviceId: { fontSize: 12, fontWeight: '600', color: '#1976d2' },
   serviceStatusText: { fontSize: 11, fontWeight: '600' },
   serviceDateRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
