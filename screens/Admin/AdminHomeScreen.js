@@ -58,7 +58,7 @@ export default function AdminHomeScreen({ user }) {
   const [loadingPending, setLoadingPending] = useState({});
   
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterStatus, setFilterStatus] = useState('all');
+  const [selectedStatuses, setSelectedStatuses] = useState(['open', 'assigned']);
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [showSortDropdown, setShowSortDropdown] = useState(false);
   const [sortType, setSortType] = useState('srid');
@@ -70,7 +70,7 @@ export default function AdminHomeScreen({ user }) {
 
   useEffect(() => {
     filterAndSortServices();
-  }, [services, searchQuery, filterStatus, sortType, sortOrder]);
+  }, [services, searchQuery, selectedStatuses, sortType, sortOrder]);
 
   const loadServices = async () => {
     try {
@@ -101,16 +101,11 @@ export default function AdminHomeScreen({ user }) {
     setShowSortDropdown(false);
   };
 
-  const getSortArrow = () => {
-    return sortOrder === 'asc' ? '↑' : '↓';
-  };
-
   const getSortLabel = () => {
-    const arrow = getSortArrow();
     switch (sortType) {
-      case 'srid': return `SR ID ${arrow}`;
-      case 'date': return `Date ${arrow}`;
-      case 'plant': return `Plant ${arrow}`;
+      case 'srid': return 'SR ID';
+      case 'date': return 'Date';
+      case 'plant': return 'Plant';
       default: return 'Sort';
     }
   };
@@ -125,8 +120,12 @@ export default function AdminHomeScreen({ user }) {
           (item.plantName || '').toLowerCase().includes(query)
       );
     }
-    if (filterStatus !== 'all') {
-      filtered = filtered.filter((item) => item.status === filterStatus);
+    if (!selectedStatuses.includes('all')) {
+      filtered = filtered.filter((item) => (
+        (selectedStatuses.includes('open') && item.status === 'O') ||
+        (selectedStatuses.includes('assigned') && (item.status === 'A' || item.status === 'P')) ||
+        (selectedStatuses.includes('completed') && item.status === 'C')
+      ));
     }
     filtered.sort((a, b) => {
       if (sortType === 'srid') {
@@ -311,6 +310,33 @@ export default function AdminHomeScreen({ user }) {
 
   const statusCounts = getStatusCount();
 
+  const toggleStatusFilter = (status) => {
+    setSelectedStatuses(current => {
+      if (current.includes('all')) return [status];
+      return current.includes(status)
+        ? current.filter(item => item !== status)
+        : [...current, status];
+    });
+  };
+
+  const toggleAllStatusFilters = () => {
+    setSelectedStatuses(current => current.includes('all') ? [] : ['all']);
+  };
+
+  const renderStatusOption = (label, count, selected, onPress) => (
+    <TouchableOpacity
+      style={styles.statusOption}
+      onPress={() => {
+        onPress();
+        setShowStatusDropdown(false);
+      }}
+    >
+      <Text style={[styles.statusOptionText, selected && styles.statusOptionTextSelected]}>
+        {label} ({count})
+      </Text>
+    </TouchableOpacity>
+  );
+
   // Group pending services by plant - Only equipment names, no Pending text
   const groupPendingByPlant = (pendingServices) => {
     const grouped = {};
@@ -380,19 +406,19 @@ export default function AdminHomeScreen({ user }) {
       <View style={styles.searchContainer}>
         <View style={styles.sortDropdownContainer}>
           <TouchableOpacity style={styles.sortBtn} onPress={() => setShowSortDropdown(!showSortDropdown)}>
-            <Ionicons name="swap-vertical-outline" size={16} color="#1976d2" />
+            <Ionicons name={sortOrder === 'asc' ? 'arrow-up-outline' : 'arrow-down-outline'} size={16} color="#1976d2" />
             <Text style={styles.sortBtnText}>{getSortLabel()}</Text>
           </TouchableOpacity>
           {showSortDropdown && (
             <View style={styles.sortMenu}>
               <TouchableOpacity style={styles.sortMenuItem} onPress={() => handleSort('srid')}>
-                <Text style={[styles.sortMenuText, sortType === 'srid' && styles.sortMenuTextActive]}>SR ID {sortType === 'srid' && getSortArrow()}</Text>
+                <Text style={[styles.sortMenuText, sortType === 'srid' && styles.sortMenuTextActive]}>SR ID</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.sortMenuItem} onPress={() => handleSort('date')}>
-                <Text style={[styles.sortMenuText, sortType === 'date' && styles.sortMenuTextActive]}>Date {sortType === 'date' && getSortArrow()}</Text>
+                <Text style={[styles.sortMenuText, sortType === 'date' && styles.sortMenuTextActive]}>Date</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.sortMenuItem} onPress={() => handleSort('plant')}>
-                <Text style={[styles.sortMenuText, sortType === 'plant' && styles.sortMenuTextActive]}>Plant Name {sortType === 'plant' && getSortArrow()}</Text>
+                <Text style={[styles.sortMenuText, sortType === 'plant' && styles.sortMenuTextActive]}>Plant Name</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -405,24 +431,21 @@ export default function AdminHomeScreen({ user }) {
         </View>
 
         <View style={styles.statusDropdownContainer}>
-          <TouchableOpacity style={styles.statusBtn} onPress={() => setShowStatusDropdown(!showStatusDropdown)}>
-            <Text style={styles.statusBtnText}>{filterStatus === 'all' ? 'All' : filterStatus === 'O' ? 'Open' : (filterStatus === 'A' || filterStatus === 'P') ? 'Assigned' : 'Completed'}</Text>
-            <Ionicons name="chevron-down" size={16} color="#1976d2" />
+          <TouchableOpacity
+            style={styles.statusBtn}
+            onPress={() => setShowStatusDropdown(!showStatusDropdown)}
+            accessibilityRole="button"
+            accessibilityLabel="Open service status filters"
+          >
+            <Ionicons name="options-outline" size={20} color="#1976d2" />
           </TouchableOpacity>
           {showStatusDropdown && (
-            <View style={styles.statusMenu}>
-              <TouchableOpacity style={styles.statusMenuItem} onPress={() => { setFilterStatus('all'); setShowStatusDropdown(false); }}>
-                <Text style={[styles.statusMenuText, filterStatus === 'all' && styles.statusMenuTextActive]}>All ({statusCounts.total})</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.statusMenuItem} onPress={() => { setFilterStatus('O'); setShowStatusDropdown(false); }}>
-                <Text style={[styles.statusMenuText, filterStatus === 'O' && styles.statusMenuTextActive]}>Open ({statusCounts.open})</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.statusMenuItem} onPress={() => { setFilterStatus('A'); setShowStatusDropdown(false); }}>
-                <Text style={[styles.statusMenuText, filterStatus === 'A' && styles.statusMenuTextActive]}>Assigned ({statusCounts.assigned})</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.statusMenuItem} onPress={() => { setFilterStatus('C'); setShowStatusDropdown(false); }}>
-                <Text style={[styles.statusMenuText, filterStatus === 'C' && styles.statusMenuTextActive]}>Completed ({statusCounts.completed})</Text>
-              </TouchableOpacity>
+            <View style={styles.statusDropdownMenu}>
+              <Text style={styles.statusDropdownTitle}>Multi-select</Text>
+              {renderStatusOption('All', statusCounts.total, selectedStatuses.includes('all'), toggleAllStatusFilters)}
+              {renderStatusOption('Open', statusCounts.open, selectedStatuses.includes('open'), () => toggleStatusFilter('open'))}
+              {renderStatusOption('Assigned', statusCounts.assigned, selectedStatuses.includes('assigned'), () => toggleStatusFilter('assigned'))}
+              {renderStatusOption('Completed', statusCounts.completed, selectedStatuses.includes('completed'), () => toggleStatusFilter('completed'))}
             </View>
           )}
         </View>
@@ -729,12 +752,12 @@ const styles = StyleSheet.create({
   searchBox: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 6, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: '#ddd', gap: 8 },
   searchInput: { flex: 1, fontSize: 14, padding: 0 },
   statusDropdownContainer: { position: 'relative', zIndex: 100 },
-  statusBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 6, borderWidth: 1, borderColor: '#ddd', gap: 8 },
-  statusBtnText: { fontSize: 13, color: '#1976d2' },
-  statusMenu: { position: 'absolute', top: 42, right: 0, backgroundColor: '#fff', borderRadius: 6, elevation: 5, minWidth: 140, borderWidth: 1, borderColor: '#ddd', zIndex: 101 },
-  statusMenuItem: { paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
-  statusMenuText: { fontSize: 13, color: '#666' },
-  statusMenuTextActive: { color: '#1976d2', fontWeight: '600' },
+  statusBtn: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', width: 38, height: 36, borderRadius: 8, borderWidth: 1, borderColor: '#e0e0e0' },
+  statusDropdownMenu: { position: 'absolute', top: 42, right: 0, backgroundColor: '#fff', borderRadius: 8, elevation: 10, minWidth: 135, zIndex: 101, borderWidth: 1, borderColor: '#e0e0e0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
+  statusDropdownTitle: { paddingHorizontal: 8, paddingVertical: 6, color: '#111827', fontSize: 12, fontWeight: '700', borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
+  statusOption: { paddingHorizontal: 8, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
+  statusOptionText: { fontSize: 12, color: '#333' },
+  statusOptionTextSelected: { color: '#1976d2', fontWeight: '600' },
   tableHeader: { flexDirection: 'row', backgroundColor: '#1976d2', paddingVertical: 12, paddingHorizontal: 12, marginHorizontal: 12, borderRadius: 6 },
   headerText: { color: '#fff', fontSize: 12, fontWeight: 'bold', textAlign: 'center' },
   snoHeader: { width: 45, textAlign: 'center' },

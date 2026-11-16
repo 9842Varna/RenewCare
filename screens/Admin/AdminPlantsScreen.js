@@ -155,16 +155,11 @@ export default function AdminPlantsScreen({ user, navigation }) {
     setShowSortDropdown(false);
   };
 
-  const getSortArrow = () => {
-    return sortOrder === 'asc' ? '↑' : '↓';
-  };
-
   const getSortLabel = () => {
-    const arrow = getSortArrow();
     switch (sortType) {
-      case 'name': return `Plant ${arrow}`;
-      case 'customer': return `Customer ${arrow}`;
-      case 'district': return `District ${arrow}`;
+      case 'name': return 'Plant';
+      case 'customer': return 'Customer';
+      case 'district': return 'District';
       default: return 'Sort';
     }
   };
@@ -438,7 +433,7 @@ export default function AdminPlantsScreen({ user, navigation }) {
           style={styles.sortBtn}
           onPress={() => setShowSortDropdown(!showSortDropdown)}
         >
-          <Ionicons name="swap-vertical-outline" size={16} color="#1976d2" />
+          <Ionicons name={sortOrder === 'asc' ? 'arrow-up-outline' : 'arrow-down-outline'} size={16} color="#1976d2" />
           <Text style={styles.sortBtnText}>{getSortLabel()}</Text>
         </TouchableOpacity>
         
@@ -446,17 +441,17 @@ export default function AdminPlantsScreen({ user, navigation }) {
           <View style={styles.sortMenu}>
             <TouchableOpacity style={styles.sortMenuItem} onPress={() => handleSort('name')}>
               <Text style={[styles.sortMenuText, sortType === 'name' && styles.sortMenuTextActive]}>
-                Plant Name {sortType === 'name' && getSortArrow()}
+                Plant Name
               </Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.sortMenuItem} onPress={() => handleSort('customer')}>
               <Text style={[styles.sortMenuText, sortType === 'customer' && styles.sortMenuTextActive]}>
-                Customer {sortType === 'customer' && getSortArrow()}
+                Customer
               </Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.sortMenuItem} onPress={() => handleSort('district')}>
               <Text style={[styles.sortMenuText, sortType === 'district' && styles.sortMenuTextActive]}>
-                District {sortType === 'district' && getSortArrow()}
+                District
               </Text>
             </TouchableOpacity>
           </View>
