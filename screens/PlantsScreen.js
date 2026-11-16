@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -24,7 +24,7 @@ import * as WebBrowser from 'expo-web-browser';
 
 //const API_BASE = 'http://10.196.32.8:2927/api';
 const API_BASE = 'http://192.168.29.223:2927/api';
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 
 // ─── Color Palette ────────────────────────────────────────────────────────────
 const C = {
@@ -55,6 +55,8 @@ export default function PlantsScreen({ user, navigation, route, onBackToServices
   const [selectedStatus, setSelectedStatus] = useState('all');
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const filterAnchorRef = useRef(null);
+  const [filterMenuPosition, setFilterMenuPosition] = useState({ top: 8, left: 12 });
   const [employeeId, setEmployeeId] = useState(null);
   const [expandedPlants, setExpandedPlants] = useState({});
   const [highlightedPlant, setHighlightedPlant] = useState(null);
@@ -64,6 +66,7 @@ export default function PlantsScreen({ user, navigation, route, onBackToServices
   
   // Date filter
   const [selectedDate, setSelectedDate] = useState(null);
+  const [dateDraft, setDateDraft] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [selectedDateStr, setSelectedDateStr] = useState('');
 
@@ -271,16 +274,28 @@ export default function PlantsScreen({ user, navigation, route, onBackToServices
     setFilteredPlants(filtered);
   };
 
+  const openDatePicker = () => {
+    setDateDraft(selectedDate || new Date());
+    setShowFilterDropdown(false);
+    setShowDatePicker(true);
+  };
+
+  const applyDateFilter = (date) => {
+    setSelectedDate(date);
+    const d = date.getDate().toString().padStart(2, '0');
+    const m = (date.getMonth() + 1).toString().padStart(2, '0');
+    const y = date.getFullYear();
+    setSelectedDateStr(`${d}/${m}/${y}`);
+  };
+
   const onDateChange = (event, date) => {
-    setShowDatePicker(Platform.OS === 'ios');
-    if (date) {
-      setSelectedDate(date);
-      const d = date.getDate().toString().padStart(2, '0');
-      const m = (date.getMonth() + 1).toString().padStart(2, '0');
-      const y = date.getFullYear();
-      setSelectedDateStr(`${d}/${m}/${y}`);
-      setShowFilterDropdown(false);
+    if (Platform.OS === 'ios') {
+      if (date) setDateDraft(date);
+      return;
     }
+
+    setShowDatePicker(false);
+    if (event.type === 'set' && date) applyDateFilter(date);
   };
 
   const clearDateFilter = () => {
@@ -381,6 +396,28 @@ export default function PlantsScreen({ user, navigation, route, onBackToServices
     pending: plants.filter(p => p.status === 'pending').length,
     completed: plants.filter(p => p.status === 'completed').length,
   };
+  const filterMenuHeight = Math.min(
+    320,
+    SCREEN_HEIGHT * 0.55,
+    (plants.length + Math.max(districts.length - 1, 0) + 4) * 42
+  );
+  const filterMenuWidth = Math.min(250, SCREEN_WIDTH - 24);
+
+  const openFilterDropdown = () => {
+    const anchor = filterAnchorRef.current;
+    if (!anchor) {
+      setShowFilterDropdown(true);
+      return;
+    }
+
+    anchor.measureInWindow((x, y, _width, height) => {
+      const maxTop = Math.max(8, SCREEN_HEIGHT - filterMenuHeight - 8);
+      const top = Math.max(8, Math.min(y + height + 4, maxTop));
+      const left = Math.max(8, Math.min(x, SCREEN_WIDTH - filterMenuWidth - 8));
+      setFilterMenuPosition({ top, left });
+      setShowFilterDropdown(true);
+    });
+  };
 
   const renderEquipmentInSheet = (eq, idx) => {
     const eqSt = getEqStatus(eq.status);
@@ -390,9 +427,6 @@ export default function PlantsScreen({ user, navigation, route, onBackToServices
     return (
       <View key={idx} style={styles.sheetEqCard}>
         <View style={styles.sheetEqHeader}>
-          <View style={styles.sheetEqIconWrap}>
-            <Ionicons name="hardware-chip-outline" size={18} color={C.primary} />
-          </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.sheetEqName}>{eq.name}</Text>
             {eq.model && eq.model !== '-' && (
@@ -400,7 +434,6 @@ export default function PlantsScreen({ user, navigation, route, onBackToServices
             )}
           </View>
           <View style={[styles.sheetEqStatusBadge, { backgroundColor: eqSt.color + '18' }]}>
-            <View style={[styles.sheetEqStatusDot, { backgroundColor: eqSt.color }]} />
             <Text style={[styles.sheetEqStatusText, { color: eqSt.color }]}>{eqSt.text}</Text>
           </View>
         </View>
@@ -431,7 +464,6 @@ export default function PlantsScreen({ user, navigation, route, onBackToServices
                 <Text style={styles.sheetPartsTitle}>Parts Used</Text>
                 {eq.parts.map((part, pIdx) => (
                   <View key={pIdx} style={styles.sheetPartRow}>
-                    <View style={styles.sheetPartDot} />
                     <Text style={styles.sheetPartName}>{part.partName}</Text>
                     <Text style={styles.sheetPartMeta}>
                       {part.qty} × ₹{part.rate} = ₹{(part.qty * part.rate).toLocaleString()}
@@ -485,7 +517,6 @@ export default function PlantsScreen({ user, navigation, route, onBackToServices
             </View>
           </View>
           <View style={[styles.plantStatusBadge, { backgroundColor: pSt.bg }]}>
-            <View style={[styles.statusDotSmall, { backgroundColor: pSt.color }]} />
             <Text style={[styles.plantStatusText, { color: pSt.color }]}>{pSt.text}</Text>
           </View>
         </TouchableOpacity>
@@ -493,11 +524,10 @@ export default function PlantsScreen({ user, navigation, route, onBackToServices
         {isExpanded && (
           <View style={styles.tableWrap}>
             <View style={styles.tableHead}>
-              <Text style={[styles.thCell, { width: 80 }]}>SR ID</Text>
-              <Text style={[styles.thCell, { width: 90 }]}>Date</Text>
-              <Text style={[styles.thCell, { flex: 1 }]}>Status</Text>
-              <Text style={[styles.thCell, { width: 75, textAlign: 'center' }]}>Equipment</Text>
-              <Text style={[styles.thCell, { width: 45, textAlign: 'center' }]}>View</Text>
+              <Text style={[styles.thCell, styles.tableSrColumn]}>SR ID</Text>
+              <Text style={[styles.thCell, styles.tableDateColumn]}>Date</Text>
+              <Text style={[styles.thCell, styles.tableEquipmentColumn]}>Equipment</Text>
+              <Text style={[styles.thCell, styles.tableStatusColumn]}>Status</Text>
             </View>
 
             {plant.services.length === 0 ? (
@@ -514,21 +544,17 @@ export default function PlantsScreen({ user, navigation, route, onBackToServices
                     style={[styles.tableRow, isLast && { borderBottomWidth: 0 }]}
                     onPress={() => handleServicePress(srv)}
                     activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel={`View details for SR-${srv.id}`}
                   >
-                    <Text style={[styles.tdCell, { width: 80, color: C.primary, fontWeight: '600' }]}>SR-{srv.id}</Text>
-                    <Text style={[styles.tdCell, { width: 90, color: C.text2, fontSize: 11 }]}>{formatDate(srv.date)}</Text>
-                    <View style={[styles.tdCell, { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
-                      <View style={[styles.statusDot, { backgroundColor: sSt.color }]} />
-                      <Text style={[styles.statusText, { color: sSt.color, fontSize: 11, fontWeight: '500' }]}>{sSt.text}</Text>
-                    </View>
-                    <Text style={[styles.tdCell, { width: 75, textAlign: 'center', color: C.text2, fontSize: 11 }]}>
+                    <Text style={[styles.tdCell, styles.tableSrColumn, { color: C.primary, fontWeight: '600' }]} numberOfLines={1}>SR-{srv.id}</Text>
+                    <Text style={[styles.tdCell, styles.tableDateColumn, { color: C.text2, fontSize: 11 }]} numberOfLines={1}>{formatDate(srv.date)}</Text>
+                    <Text style={[styles.tdCell, styles.tableEquipmentColumn, { color: C.text2, fontSize: 11 }]} numberOfLines={1}>
                       {srv.equipmentList?.length || 0}
                     </Text>
-                    <View style={[styles.tdCell, { width: 45, alignItems: 'center' }]}>
-                      <View style={styles.viewBtn}>
-                        <Ionicons name="eye-outline" size={14} color={C.primary} />
-                      </View>
-                    </View>
+                    <Text style={[styles.statusText, styles.tableStatusColumn, { color: sSt.color, fontSize: 11, fontWeight: '500' }]} numberOfLines={1}>
+                      {sSt.text}
+                    </Text>
                   </TouchableOpacity>
                 );
               })
@@ -564,18 +590,51 @@ export default function PlantsScreen({ user, navigation, route, onBackToServices
       {/* The back button and title have been removed - use App.js header navigation */}
 
       <View style={styles.filterRow}>
-        <View style={styles.filterDropWrap}>
-          <TouchableOpacity style={styles.filterBtn} onPress={() => setShowFilterDropdown(!showFilterDropdown)}>
-            <Ionicons name="filter" size={16} color={C.primary} />
-            <Text style={styles.filterBtnText}>Filter</Text>
-            <Ionicons name="chevron-down" size={12} color={C.primary} />
+        <View ref={filterAnchorRef} collapsable={false} style={styles.filterDropWrap}>
+          <TouchableOpacity
+            style={styles.filterBtn}
+            accessibilityLabel="Open filters"
+            onPress={() => showFilterDropdown ? setShowFilterDropdown(false) : openFilterDropdown()}
+          >
+            <Ionicons name="filter" size={18} color={C.primary} />
           </TouchableOpacity>
 
           {showFilterDropdown && (
-            <ScrollView style={styles.filterDropMenu} showsVerticalScrollIndicator={true} nestedScrollEnabled={true}>
+            <Modal
+              transparent
+              visible={showFilterDropdown}
+              animationType="fade"
+              onRequestClose={() => setShowFilterDropdown(false)}
+            >
+              <View style={styles.filterModalRoot}>
+                <TouchableOpacity
+                  style={styles.filterModalBackdrop}
+                  activeOpacity={1}
+                  onPress={() => setShowFilterDropdown(false)}
+                />
+                <View
+                  style={[
+                    styles.filterDropMenu,
+                    {
+                      top: filterMenuPosition.top,
+                      left: filterMenuPosition.left,
+                      width: filterMenuWidth,
+                      height: filterMenuHeight,
+                    },
+                  ]}
+                >
+                  <ScrollView
+                    style={styles.filterDropScroll}
+                    showsVerticalScrollIndicator
+                    nestedScrollEnabled
+                    keyboardShouldPersistTaps="handled"
+                    scrollEnabled
+                    bounces={false}
+                    directionalLockEnabled
+                  >
               {/* REMOVED Clear Filter option */}
 
-              <TouchableOpacity style={styles.filterDropItem} onPress={() => setShowDatePicker(true)}>
+              <TouchableOpacity style={styles.filterDropItem} onPress={openDatePicker}>
                 <Ionicons name="calendar-outline" size={16} color={C.primary} />
                 <Text style={styles.filterDropItemText}>
                   {selectedDateStr ? `Date: ${selectedDateStr}` : 'Select Date'}
@@ -657,12 +716,15 @@ export default function PlantsScreen({ user, navigation, route, onBackToServices
                   )}
                 </TouchableOpacity>
               ))}
-            </ScrollView>
+                  </ScrollView>
+                </View>
+              </View>
+            </Modal>
           )}
         </View>
 
         <View style={styles.searchWrap}>
-          <Ionicons name="search-outline" size={16} color={C.text3} />
+          <Ionicons name="search-outline" size={18} color={C.text3} />
           <TextInput
             style={styles.searchInput}
             placeholder="Search"
@@ -714,14 +776,47 @@ export default function PlantsScreen({ user, navigation, route, onBackToServices
         <Text style={styles.resultsCountText}>{filteredPlants.length} Results found</Text>
       </View>
 
-      {showDatePicker && (
+      {showDatePicker && (Platform.OS === 'ios' ? (
+        <Modal
+          animationType="fade"
+          transparent
+          visible={showDatePicker}
+          onRequestClose={() => setShowDatePicker(false)}
+        >
+          <View style={styles.datePickerOverlay}>
+            <View style={styles.datePickerContainer}>
+              <Text style={styles.datePickerTitle}>Select date</Text>
+              <DateTimePicker
+                value={dateDraft}
+                mode="date"
+                display="spinner"
+                onChange={onDateChange}
+              />
+              <View style={styles.datePickerActions}>
+                <TouchableOpacity style={styles.datePickerAction} onPress={() => setShowDatePicker(false)}>
+                  <Text style={styles.datePickerCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.datePickerAction}
+                  onPress={() => {
+                    applyDateFilter(dateDraft);
+                    setShowDatePicker(false);
+                  }}
+                >
+                  <Text style={styles.datePickerConfirmText}>OK</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      ) : (
         <DateTimePicker
-          value={selectedDate || new Date()}
+          value={dateDraft}
           mode="date"
           display="default"
           onChange={onDateChange}
         />
-      )}
+      ))}
 
       <FlatList
         data={filteredPlants}
@@ -818,41 +913,53 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingTop: 4,
+    paddingBottom: 8,
     gap: 8,
     backgroundColor: C.white,
     borderBottomWidth: 1,
     borderBottomColor: C.border,
-    marginTop: 8,
+    marginTop: 6,
+    zIndex: 10,
+    elevation: 10,
   },
-  filterDropWrap: { position: 'relative', zIndex: 200 },
+  filterDropWrap: { position: 'relative', zIndex: 300, elevation: 20 },
   filterBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
     backgroundColor: C.primaryLight,
     paddingHorizontal: 10,
     paddingVertical: 7,
     borderRadius: 8,
   },
-  filterBtnText: { fontSize: 12, color: C.primary, fontWeight: '600' },
+  filterModalRoot: { flex: 1 },
+  filterModalBackdrop: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: 'transparent',
+  },
   filterDropMenu: {
     position: 'absolute',
     top: 35,
     left: 0,
     backgroundColor: C.white,
     borderRadius: 10,
-    elevation: 6,
+    elevation: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.12,
     shadowRadius: 6,
     width: 250,
-    maxHeight: 400,
-    zIndex: 300,
+    maxHeight: SCREEN_HEIGHT * 0.55,
+    zIndex: 301,
     borderWidth: 1,
     borderColor: C.border,
+    overflow: 'hidden',
   },
+  filterDropScroll: { flex: 1 },
   filterDropItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -876,6 +983,13 @@ const styles = StyleSheet.create({
   plantItem: { paddingLeft: 24 },
   districtItem: { paddingLeft: 24 },
   filterDivider: { height: 1, backgroundColor: '#E9ECEF', marginVertical: 4 },
+  datePickerOverlay: { flex: 1, justifyContent: 'center', padding: 24, backgroundColor: 'rgba(0,0,0,0.35)' },
+  datePickerContainer: { backgroundColor: C.white, borderRadius: 12, padding: 16 },
+  datePickerTitle: { fontSize: 16, fontWeight: '700', color: C.text1, marginBottom: 8 },
+  datePickerActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 8 },
+  datePickerAction: { paddingHorizontal: 14, paddingVertical: 9 },
+  datePickerCancelText: { color: C.text2, fontSize: 13, fontWeight: '600' },
+  datePickerConfirmText: { color: C.primary, fontSize: 13, fontWeight: '700' },
 
   searchWrap: {
     flex: 1,
@@ -887,7 +1001,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     gap: 6,
   },
-  searchInput: { flex: 1, fontSize: 12, color: C.text1, padding: 0 },
+  searchInput: { flex: 1, fontSize: 14, color: C.text1, padding: 0 },
 
   statusDropWrap: { position: 'relative', zIndex: 199 },
   statusBtn: {
@@ -960,51 +1074,43 @@ const styles = StyleSheet.create({
   locationRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
   locationText: { fontSize: 11, color: C.text3 },
   plantStatusBadge: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
     paddingHorizontal: 9,
     paddingVertical: 4,
     borderRadius: 20,
   },
-  statusDotSmall: { width: 6, height: 6, borderRadius: 3 },
   plantStatusText: { fontSize: 10, fontWeight: '600' },
 
   tableWrap: {
     borderTopWidth: 1,
     borderTopColor: C.border,
-    paddingHorizontal: 12,
-    paddingBottom: 6,
+    paddingHorizontal: 8,
+    paddingBottom: 4,
   },
   tableHead: {
     flexDirection: 'row',
-    paddingVertical: 9,
-    paddingHorizontal: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
     backgroundColor: '#F8FAFC',
     borderRadius: 7,
-    marginTop: 8,
+    marginTop: 4,
     marginBottom: 2,
   },
   thCell: { fontSize: 11, fontWeight: '600', color: C.text3 },
+  tableSrColumn: { flex: 1.1, minWidth: 0 },
+  tableDateColumn: { flex: 1.2, minWidth: 0 },
+  tableEquipmentColumn: { flex: 1, minWidth: 0, textAlign: 'center' },
+  tableStatusColumn: { flex: 1.3, minWidth: 0, textAlign: 'right' },
   tableRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
-    paddingHorizontal: 6,
+    paddingHorizontal: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#F8FAFC',
+    borderBottomColor: C.border,
   },
   tdCell: { fontSize: 12, color: C.text1 },
-  statusDot: { width: 7, height: 7, borderRadius: 4 },
   statusText: { fontSize: 11, fontWeight: '500' },
-  viewBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 8,
-    backgroundColor: C.primaryLight,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   noDataRow: { paddingVertical: 18, alignItems: 'center' },
   noDataText: { fontSize: 12, color: C.text3 },
 
@@ -1021,7 +1127,7 @@ const styles = StyleSheet.create({
     backgroundColor: C.white,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    height: SCREEN_HEIGHT * 0.85,
+    height: SCREEN_HEIGHT * 0.7,
   },
   bottomSheetHandle: {
     width: 40,
@@ -1100,25 +1206,14 @@ const styles = StyleSheet.create({
     padding: 13,
     gap: 10,
   },
-  sheetEqIconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 9,
-    backgroundColor: C.primaryLight,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   sheetEqName: { fontSize: 14, fontWeight: '600', color: C.text1 },
   sheetEqModel: { fontSize: 11, color: C.text3, marginTop: 2 },
   sheetEqStatusBadge: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 20,
   },
-  sheetEqStatusDot: { width: 6, height: 6, borderRadius: 3 },
   sheetEqStatusText: { fontSize: 11, fontWeight: '600' },
 
   sheetEqDetails: {
@@ -1143,7 +1238,6 @@ const styles = StyleSheet.create({
   },
   sheetPartsTitle: { fontSize: 11, fontWeight: '700', color: C.text2, marginBottom: 8 },
   sheetPartRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
-  sheetPartDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: C.primary },
   sheetPartName: { fontSize: 12, color: C.text1, flex: 1 },
   sheetPartMeta: { fontSize: 11, color: C.primary, fontWeight: '600' },
 

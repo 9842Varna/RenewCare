@@ -12,6 +12,7 @@ import {
   ScrollView,
   Alert,
   Dimensions,
+  Platform,
   StatusBar,
   TouchableWithoutFeedback,
 } from 'react-native';
@@ -29,7 +30,7 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
   const [serviceRequests, setServiceRequests] = useState([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedStatus, setSelectedStatus] = useState('all');
+  const [selectedStatuses, setSelectedStatuses] = useState(['assigned', 'pending']);
   const [searchQuery, setSearchQuery] = useState('');
   const [employeeId, setEmployeeId] = useState(null);
   const [viewDetailsModal, setViewDetailsModal] = useState(false);
@@ -55,7 +56,7 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
 
   useEffect(() => {
     filterAndSortServices();
-  }, [serviceRequests, selectedStatus, searchQuery, selectedDate, selectedPlant]);
+  }, [serviceRequests, selectedStatuses, searchQuery, selectedDate, selectedPlant]);
 
   useEffect(() => {
     if (employeeId) {
@@ -142,27 +143,17 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
   const filterAndSortServices = () => {
     let filtered = [...serviceRequests];
 
-    if (selectedStatus === 'all') {
-      filtered = filtered;
-    } else if (selectedStatus === 'assigned') {
-      filtered = filtered.filter(req => {
-        const equipmentList = req.equipmentList || [];
-        if (equipmentList.length === 0) return false;
-        return equipmentList.every(eq => eq.status !== 'C');
-      });
-    } else if (selectedStatus === 'pending') {
+    if (!selectedStatuses.includes('all')) {
       filtered = filtered.filter(req => {
         const equipmentList = req.equipmentList || [];
         if (equipmentList.length === 0) return false;
         const total = equipmentList.length;
         const completed = equipmentList.filter(eq => eq.status === 'C').length;
-        return completed > 0 && completed < total;
-      });
-    } else if (selectedStatus === 'completed') {
-      filtered = filtered.filter(req => {
-        const equipmentList = req.equipmentList || [];
-        if (equipmentList.length === 0) return false;
-        return equipmentList.every(eq => eq.status === 'C');
+        return (
+          (selectedStatuses.includes('assigned') && completed === 0) ||
+          (selectedStatuses.includes('pending') && completed > 0 && completed < total) ||
+          (selectedStatuses.includes('completed') && completed === total)
+        );
       });
     }
 
@@ -284,6 +275,7 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
+    setSelectedStatuses(['all']);
     loadEmployeeData().finally(() => setRefreshing(false));
   }, []);
 
@@ -334,18 +326,48 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
     return { all, assigned, pending, completed };
   };
 
+  const toggleStatusFilter = (status) => {
+    setSelectedStatuses(current => {
+      if (current.includes('all')) return [status];
+      return current.includes(status)
+        ? current.filter(selected => selected !== status)
+        : [...current, status];
+    });
+  };
+
+  const toggleAllStatusFilters = () => {
+    setSelectedStatuses(current =>
+      current.includes('all') ? [] : ['all']
+    );
+  };
+
+  const renderStatusOption = (label, count, selected, onPress) => (
+    <TouchableOpacity
+      style={styles.statusOption}
+      onPress={() => {
+        onPress();
+        setShowStatusDropdown(false);
+      }}
+    >
+      <Text style={[styles.statusOptionText, selected && styles.statusOptionTextSelected]}>
+        {label} ({count})
+      </Text>
+    </TouchableOpacity>
+  );
+
+  const applyDateFilter = (date) => {
+    setTempDate(date);
+    const day = date.getDate().toString().padStart(2, '0');
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const year = date.getFullYear();
+    setSelectedDate(`${day}/${month}/${year}`);
+    setDateFilterActive(true);
+    setShowFilterDropdown(false);
+  };
+
   const onDateChange = (event, selectedDate) => {
     setShowDatePicker(false);
-    if (selectedDate) {
-      setTempDate(selectedDate);
-      const day = selectedDate.getDate().toString().padStart(2, '0');
-      const month = (selectedDate.getMonth() + 1).toString().padStart(2, '0');
-      const year = selectedDate.getFullYear();
-      const formattedDate = `${day}/${month}/${year}`;
-      setSelectedDate(formattedDate);
-      setDateFilterActive(true);
-    }
-    setShowFilterDropdown(false);
+    if (event.type === 'set' && selectedDate) applyDateFilter(selectedDate);
   };
 
   const handlePlantSelect = (plant) => {
@@ -433,6 +455,8 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
     return isRequestDateWithinFiveDays(service.date);
   };
 
+  const statusCounts = getStatusCounts();
+
   if (loading && !refreshing) {
     return (
       <View style={styles.loadingContainer}>
@@ -513,7 +537,10 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
           
           {showFilterDropdown && (
             <View style={styles.filterDropdownMenu}>
-              <TouchableOpacity style={styles.filterOption} onPress={() => setShowDatePicker(true)}>
+              <TouchableOpacity style={styles.filterOption} onPress={() => {
+                setShowFilterDropdown(false);
+                setShowDatePicker(true);
+              }}>
                 <Ionicons name="calendar-outline" size={16} color="#1976d2" />
                 <Text style={styles.filterOptionText}>
                   {selectedDate ? 'Change Date' : 'Select Date'}
@@ -571,54 +598,67 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
           <TouchableOpacity 
             style={styles.statusBtn}
             onPress={() => setShowStatusDropdown(!showStatusDropdown)}
+            accessibilityRole="button"
+            accessibilityLabel="Open service status filters"
           >
-            <Text style={styles.statusBtnText}>
-              {selectedStatus === 'all' ? 'All' :
-               selectedStatus === 'assigned' ? 'Assigned' :
-               selectedStatus === 'pending' ? 'Progress' : 'Completed'}
-            </Text>
-            <Ionicons name="chevron-down" size={12} color="#1976d2" />
+            <Ionicons name="options-outline" size={20} color="#1976d2" />
           </TouchableOpacity>
           
           {showStatusDropdown && (
             <View style={styles.statusDropdownMenu}>
-              <TouchableOpacity 
-                style={[styles.statusOption, selectedStatus === 'all' && styles.statusOptionActive]}
-                onPress={() => { setSelectedStatus('all'); setShowStatusDropdown(false); }}
-              >
-                <Text style={styles.statusOptionText}>All ({getStatusCounts().all})</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.statusOption, selectedStatus === 'assigned' && styles.statusOptionActive]}
-                onPress={() => { setSelectedStatus('assigned'); setShowStatusDropdown(false); }}
-              >
-                <Text style={styles.statusOptionText}>Assigned ({getStatusCounts().assigned})</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.statusOption, selectedStatus === 'pending' && styles.statusOptionActive]}
-                onPress={() => { setSelectedStatus('pending'); setShowStatusDropdown(false); }}
-              >
-                <Text style={styles.statusOptionText}>In Progress ({getStatusCounts().pending})</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.statusOption, selectedStatus === 'completed' && styles.statusOptionActive]}
-                onPress={() => { setSelectedStatus('completed'); setShowStatusDropdown(false); }}
-              >
-                <Text style={styles.statusOptionText}>Completed ({getStatusCounts().completed})</Text>
-              </TouchableOpacity>
+              <Text style={styles.statusDropdownTitle}>Multi-select</Text>
+              {renderStatusOption('All', statusCounts.all, selectedStatuses.includes('all'), toggleAllStatusFilters)}
+              {renderStatusOption('Assigned', statusCounts.assigned, selectedStatuses.includes('assigned'), () => toggleStatusFilter('assigned'))}
+              {renderStatusOption('In Progress', statusCounts.pending, selectedStatuses.includes('pending'), () => toggleStatusFilter('pending'))}
+              {renderStatusOption('Completed', statusCounts.completed, selectedStatuses.includes('completed'), () => toggleStatusFilter('completed'))}
             </View>
           )}
         </View>
       </View>
 
-      {showDatePicker && (
+      {showDatePicker && (Platform.OS === 'ios' ? (
+        <Modal
+          animationType="fade"
+          transparent
+          visible={showDatePicker}
+          onRequestClose={() => setShowDatePicker(false)}
+        >
+          <View style={styles.datePickerOverlay}>
+            <View style={styles.datePickerContainer}>
+              <Text style={styles.datePickerTitle}>Select date</Text>
+              <DateTimePicker
+                value={tempDate}
+                mode="date"
+                display="spinner"
+                onChange={(event, date) => {
+                  if (date) setTempDate(date);
+                }}
+              />
+              <View style={styles.datePickerActions}>
+                <TouchableOpacity style={styles.datePickerAction} onPress={() => setShowDatePicker(false)}>
+                  <Text style={styles.datePickerCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.datePickerAction}
+                  onPress={() => {
+                    applyDateFilter(tempDate);
+                    setShowDatePicker(false);
+                  }}
+                >
+                  <Text style={styles.datePickerConfirmText}>OK</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      ) : (
         <DateTimePicker
           value={tempDate}
           mode="date"
           display="default"
           onChange={onDateChange}
         />
-      )}
+      ))}
 
       <FlatList
         data={groupedPlants}
@@ -686,24 +726,19 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
               {isExpanded && (
                 <View style={styles.treeviewContent}>
                   <View style={styles.treeviewStats}>
-                    <View style={styles.treeviewStat}>
-                      <Ionicons name="document-text-outline" size={14} color="#666" />
-                      <Text style={styles.treeviewStatText}>Total: {plant.totalServices}</Text>
-                    </View>
-                    <View style={styles.treeviewStat}>
-                      <Ionicons name="checkmark-circle-outline" size={14} color="#EF4444" />
-                      <Text style={styles.treeviewStatText}>Done: {plant.completedCount}</Text>
-                    </View>
-                    <View style={styles.treeviewStat}>
-                      <Ionicons name="refresh-circle" size={14} color="#4CAF50" />
-                      <Text style={styles.treeviewStatText}>Progress: {plant.inProgressCount}</Text>
-                    </View>
-                    <View style={styles.treeviewStat}>
-                      <Ionicons name="time-outline" size={14} color="#FF9800" />
-                      <Text style={styles.treeviewStatText}>Pending: {plant.pendingCount}</Text>
-                    </View>
+                    <Text style={styles.treeviewStatText}>Total: {plant.totalServices}</Text>
+                    <Text style={styles.treeviewStatText}>Done: {plant.completedCount}</Text>
+                    <Text style={styles.treeviewStatText}>Progress: {plant.inProgressCount}</Text>
+                    <Text style={styles.treeviewStatText}>Pending: {plant.pendingCount}</Text>
                   </View>
                   
+                  <View style={styles.serviceTable}>
+                    <View style={styles.serviceTableHeader}>
+                      <Text style={[styles.serviceTableHeading, styles.serviceIdColumn]}>SR ID</Text>
+                      <Text style={[styles.serviceTableHeading, styles.serviceDateColumn]}>Request date</Text>
+                      <Text style={[styles.serviceTableHeading, styles.serviceStatusColumn]}>Status</Text>
+                      <Text style={[styles.serviceTableHeading, styles.serviceEquipmentColumn]}>Equipment</Text>
+                    </View>
                   {sortedServices.map(service => {
                     const allCompleted = service.equipmentList?.length > 0 && service.equipmentList?.every(eq => eq.status === 'C');
                     const totalEquipment = service.equipmentList?.length || 0;
@@ -714,52 +749,40 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
                     const isServiceExpanded = expandedServices[serviceKey];
                     
                     let displayEquipment = service.equipmentList || [];
-                    if (selectedStatus === 'assigned') displayEquipment = displayEquipment.filter(eq => eq.status !== 'C');
-                    else if (selectedStatus === 'pending') displayEquipment = displayEquipment.filter(eq => eq.status !== 'C');
+                    if (!selectedStatuses.includes('completed') && !selectedStatuses.includes('all')) {
+                      displayEquipment = displayEquipment.filter(eq => eq.status !== 'C');
+                    }
                     
-                    if (displayEquipment.length === 0 && selectedStatus !== 'completed' && selectedStatus !== 'all') return null;
-                    if (selectedStatus === 'completed' && !allCompleted) return null;
+                    if (displayEquipment.length === 0 && !selectedStatuses.includes('all')) return null;
                     
                     return (
                       <View key={serviceKey} style={[styles.treeviewServiceItem, isNewService && styles.newServiceItem]}>
                         <TouchableOpacity
-                          style={styles.serviceCompactRow}
+                          style={styles.serviceTableRow}
                           onPress={() => toggleService(serviceKey)}
                           activeOpacity={0.7}
+                          accessibilityRole="button"
+                          accessibilityLabel={`SR-${service.id}, ${service.date}, ${statusText}. ${isServiceExpanded ? 'Hide' : 'Show'} details`}
                         >
-                          <View style={styles.serviceCompactInfo}>
-                            <View style={styles.serviceCompactTitleRow}>
-                              <Text style={styles.serviceId}>SR-{service.id}</Text>
-                              {isNewService && (
-                                <View style={styles.newBadge}>
-                                  <Text style={styles.newBadgeText}>NEW</Text>
-                                </View>
-                              )}
-                            </View>
-                            <Text style={styles.serviceCompactDate} numberOfLines={1}>
-                              Request: {service.date}
-                            </Text>
+                          <View style={[styles.serviceTableCell, styles.serviceIdColumn]}>
+                            <Text style={styles.serviceId}>SR-{service.id}</Text>
+                            {isNewService && <Text style={styles.newBadgeText}>NEW</Text>}
                           </View>
-                          <View style={styles.serviceCompactMeta}>
-                            <View style={[styles.serviceStatusPill, { borderColor: statusColor }]}>
-                              <Text style={[styles.serviceStatusText, { color: statusColor }]} numberOfLines={1}>
-                                {statusText}
-                              </Text>
-                            </View>
-                            <Text style={styles.serviceCompactCount}>{totalEquipment} eq</Text>
-                            <Ionicons
-                              name={isServiceExpanded ? 'chevron-up' : 'chevron-down'}
-                              size={16}
-                              color="#64748b"
-                            />
-                          </View>
+                          <Text style={[styles.serviceTableCellText, styles.serviceDateColumn]} numberOfLines={1}>
+                            {service.date || '-'}
+                          </Text>
+                          <Text style={[styles.serviceTableCellText, styles.serviceStatusColumn, { color: statusColor }]}>
+                            {statusText}
+                          </Text>
+                          <Text style={[styles.serviceTableCellText, styles.serviceEquipmentColumn]}>
+                            {totalEquipment}
+                          </Text>
                         </TouchableOpacity>
 
                         {isServiceExpanded && (
                           <View style={styles.serviceExpandedContent}>
                             {getServiceCompletionDate(service) && (
                               <View style={styles.serviceDateRow}>
-                                <Ionicons name="checkmark-done-circle" size={10} color="#EF4444" />
                                 <Text style={[styles.serviceDate, { color: '#EF4444' }]}>
                                   Completed: {getServiceCompletionDate(service)}
                                 </Text>
@@ -786,7 +809,6 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
                                         <Text style={styles.equipmentItemModel}>Model: {eq.model || '-'}</Text>
                                         {eq.status === 'C' && eq.parts && eq.parts.length > 0 && (
                                           <View style={styles.partsSummary}>
-                                            <Ionicons name="cube-outline" size={10} color="#666" />
                                             <Text style={styles.partsSummaryText}>{eq.parts.length} part(s) used</Text>
                                           </View>
                                         )}
@@ -794,13 +816,11 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
                                     </View>
                                     {eq.status !== 'C' && (
                                       <TouchableOpacity style={styles.updateSmallBtn} onPress={() => openUpdateService(service, eq)}>
-                                        <Ionicons name="create-outline" size={10} color="#fff" />
                                         <Text style={styles.updateSmallBtnText}>Update</Text>
                                       </TouchableOpacity>
                                     )}
                                     {eq.status === 'C' && (
                                       <View style={styles.completedBadgeSmall}>
-                                        <Ionicons name="checkmark-circle" size={10} color="#EF4444" />
                                         <Text style={styles.completedBadgeSmallText}>Done</Text>
                                       </View>
                                     )}
@@ -811,7 +831,6 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
 
                             {!allCompleted && displayEquipment.length > 0 && (
                               <View style={styles.footerLocked}>
-                                <Ionicons name="lock-closed-outline" size={10} color="#bbb" />
                                 <Text style={styles.footerLockedText}>Complete all equipment</Text>
                               </View>
                             )}
@@ -819,7 +838,6 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
                             {allCompleted && (
                               <TouchableOpacity style={styles.viewDetailsBtn} onPress={() => openPlantDetails(service)}>
                                 <Text style={styles.viewDetailsBtnText}>View Details</Text>
-                                <Ionicons name="document-text-outline" size={14} color="#1976d2" />
                               </TouchableOpacity>
                             )}
                           </View>
@@ -827,6 +845,7 @@ export default function EmployeeDashboardScreen({ user, onLogout, hideHeader = t
                       </View>
                     );
                   })}
+                  </View>
                 </View>
               )}
             </View>
@@ -1080,7 +1099,7 @@ function UpdateServiceScreen({ data, equipment, onClose, onComplete }) {
   return (
     <View style={styles.updateContainer}>
       <View style={styles.updateHeader}>
-        <TouchableOpacity onPress={onClose} style={styles.updateBackBtn}><Ionicons name="arrow-back" size={24} color="#1976d2" /></TouchableOpacity>
+        <TouchableOpacity onPress={onClose} style={styles.updateBackBtn}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
         <Text style={styles.updateHeaderTitle}>Complete Service</Text>
         <View style={styles.headerPlaceholder} />
       </View>
@@ -1101,7 +1120,7 @@ function UpdateServiceScreen({ data, equipment, onClose, onComplete }) {
                 {serviceTypes.map(type => (
                   <TouchableOpacity key={type.id} style={[styles.professionalDropdownItem, selectedServiceType === type.id && styles.professionalDropdownItemSelected]} onPress={() => { setSelectedServiceType(type.id); setShowServiceTypeDropdown(false); }}>
                     <View><Text style={styles.dropdownItemTitle}>{type.name}</Text><Text style={styles.dropdownItemSubtitle}>₹{type.rate} / {type.unit}</Text></View>
-                    {selectedServiceType === type.id && <Ionicons name="checkmark-circle" size={20} color="#2e7d32" />}
+                    {selectedServiceType === type.id && <Ionicons name="checkmark-circle" size={20} color="#0F766E" />}
                   </TouchableOpacity>
                 ))}
               </ScrollView>
@@ -1122,7 +1141,7 @@ function UpdateServiceScreen({ data, equipment, onClose, onComplete }) {
                  availableParts.map(part => (
                   <TouchableOpacity key={part.partId} style={[styles.professionalDropdownItem, selectedPartForAdd?.partId === part.partId && styles.professionalDropdownItemSelected]} onPress={() => { setSelectedPartForAdd(part); setShowPartsDropdown(false); }}>
                     <View><Text style={styles.dropdownItemTitle}>{part.partName}</Text><Text style={styles.dropdownItemSubtitle}>₹{part.rate} / {part.unit}</Text></View>
-                    {selectedPartForAdd?.partId === part.partId && <Ionicons name="checkmark-circle" size={20} color="#2e7d32" />}
+                    {selectedPartForAdd?.partId === part.partId && <Ionicons name="checkmark-circle" size={20} color="#0F766E" />}
                   </TouchableOpacity>
                 ))}
               </ScrollView>
@@ -1215,17 +1234,24 @@ const styles = StyleSheet.create({
   filterOptionClear: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, gap: 10, backgroundColor: '#FFEBEE' },
   filterOptionClearText: { fontSize: 13, color: '#d32f2f', fontWeight: '500' },
   filterDivider: { height: 1, backgroundColor: '#f0f0f0' },
+  datePickerOverlay: { flex: 1, justifyContent: 'center', padding: 24, backgroundColor: 'rgba(0,0,0,0.35)' },
+  datePickerContainer: { backgroundColor: '#fff', borderRadius: 12, padding: 16 },
+  datePickerTitle: { fontSize: 16, fontWeight: '600', color: '#1a237e', marginBottom: 8 },
+  datePickerActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 8 },
+  datePickerAction: { paddingHorizontal: 14, paddingVertical: 9 },
+  datePickerCancelText: { color: '#64748b', fontSize: 13, fontWeight: '600' },
+  datePickerConfirmText: { color: '#1976d2', fontSize: 13, fontWeight: '700' },
   
   searchBox: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: '#e0e0e0', gap: 8 },
   searchInput: { flex: 1, fontSize: 13, color: '#333', padding: 0 },
   
   statusDropdownContainer: { position: 'relative', zIndex: 1001 },
-  statusBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: '#e0e0e0', gap: 6 },
-  statusBtnText: { fontSize: 12, color: '#1976d2', fontWeight: '500' },
-  statusDropdownMenu: { position: 'absolute', top: 42, right: 0, backgroundColor: '#fff', borderRadius: 10, elevation: 10, minWidth: 140, zIndex: 1002, borderWidth: 1, borderColor: '#e0e0e0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
-  statusOption: { paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
-  statusOptionActive: { backgroundColor: '#E3F2FD' },
-  statusOptionText: { fontSize: 13, color: '#333' },
+  statusBtn: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', width: 38, height: 36, borderRadius: 8, borderWidth: 1, borderColor: '#e0e0e0' },
+  statusDropdownMenu: { position: 'absolute', top: 42, right: 0, backgroundColor: '#fff', borderRadius: 8, elevation: 10, minWidth: 135, zIndex: 1002, borderWidth: 1, borderColor: '#e0e0e0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
+  statusDropdownTitle: { paddingHorizontal: 8, paddingVertical: 6, color: '#111827', fontSize: 12, fontWeight: '700', borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
+  statusOption: { paddingHorizontal: 8, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
+  statusOptionText: { fontSize: 12, color: '#333' },
+  statusOptionTextSelected: { color: '#1976d2', fontWeight: '600' },
   
   listContent: { paddingHorizontal: 12, paddingBottom: 20, paddingTop: 8 },
   emptyContainer: { alignItems: 'center', padding: 60 },
@@ -1245,45 +1271,44 @@ const styles = StyleSheet.create({
   treeviewCount: { fontSize: 12, fontWeight: '600', color: '#666', minWidth: 40, textAlign: 'right' },
   treeviewContent: { padding: 12, paddingTop: 0, backgroundColor: '#f8fafc', borderTopWidth: 1, borderTopColor: '#eef2f6' },
   treeviewStats: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, paddingVertical: 10, marginBottom: 8, borderBottomWidth: 1, borderBottomColor: '#eef2f6' },
-  treeviewStat: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   treeviewStatText: { fontSize: 11, color: '#666' },
-  treeviewServiceItem: { backgroundColor: '#fff', borderRadius: 8, marginBottom: 7, borderWidth: 1, borderColor: '#e5eaf0', overflow: 'hidden' },
-  newServiceItem: { borderColor: '#81c784', backgroundColor: '#f5fbf6' },
-  newBadge: { backgroundColor: '#4CAF50', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 },
-  newBadgeText: { color: '#fff', fontSize: 8, fontWeight: 'bold' },
-  serviceCompactRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 10, paddingVertical: 9, gap: 8, minHeight: 58 },
-  serviceCompactInfo: { flex: 1, minWidth: 0 },
-  serviceCompactTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  serviceCompactDate: { fontSize: 10, color: '#64748b', marginTop: 3 },
-  serviceCompactMeta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  serviceStatusPill: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 6, paddingVertical: 3, maxWidth: 82, backgroundColor: '#fff' },
-  serviceCompactCount: { fontSize: 10, color: '#64748b', minWidth: 30, textAlign: 'center' },
+  serviceTable: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#e5eaf0', borderRadius: 6, overflow: 'hidden' },
+  serviceTableHeader: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#eef4fa', paddingHorizontal: 8, minHeight: 36, borderBottomWidth: 1, borderBottomColor: '#dce5ee' },
+  serviceTableHeading: { fontSize: 10, fontWeight: '700', color: '#475569' },
+  serviceTableRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, minHeight: 44, borderBottomWidth: 1, borderBottomColor: '#edf1f5', backgroundColor: '#fff' },
+  serviceTableCell: { justifyContent: 'center' },
+  serviceTableCellText: { fontSize: 10, color: '#334155' },
+  serviceIdColumn: { flex: 1.05 },
+  serviceDateColumn: { flex: 1.25 },
+  serviceStatusColumn: { flex: 1.2 },
+  serviceEquipmentColumn: { flex: 0.8, textAlign: 'center' },
+  newServiceItem: { backgroundColor: '#f5fbf6' },
   serviceExpandedContent: { borderTopWidth: 1, borderTopColor: '#eef2f6', paddingHorizontal: 10, paddingBottom: 8 },
-  serviceId: { fontSize: 12, fontWeight: '600', color: '#1976d2' },
-  serviceStatusText: { fontSize: 11, fontWeight: '600' },
-  serviceDateRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
+  serviceId: { fontSize: 10, fontWeight: '600', color: '#1976d2' },
+  newBadgeText: { color: '#2e7d32', fontSize: 8, fontWeight: 'bold', marginTop: 2 },
+  serviceDateRow: { marginBottom: 8 },
   serviceDate: { fontSize: 10, color: '#666' },
   
   equipmentListContainer: { marginTop: 8 },
   equipmentListTitle: { fontSize: 11, fontWeight: '600', color: '#666', marginBottom: 6 },
-  equipmentListItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#f8fafc', padding: 8, borderRadius: 6, marginBottom: 6 },
-  newEquipmentItem: { backgroundColor: '#E8F5E9', borderLeftWidth: 3, borderLeftColor: '#4CAF50' },
+  equipmentListItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#fff', paddingVertical: 8, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: '#edf1f5' },
+  newEquipmentItem: { backgroundColor: '#f5fbf6', borderLeftWidth: 3, borderLeftColor: '#4CAF50', paddingLeft: 8 },
   equipmentNameRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 },
   equipmentItemName: { fontSize: 11, fontWeight: '500', color: '#333' },
-  equipmentNewBadge: { backgroundColor: '#4CAF50', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 },
-  equipmentNewBadgeText: { fontSize: 8, color: '#fff', fontWeight: 'bold' },
+  equipmentNewBadge: { backgroundColor: '#e8f5e9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  equipmentNewBadgeText: { fontSize: 8, color: '#2e7d32', fontWeight: 'bold' },
   equipmentItemModel: { fontSize: 9, color: '#999', marginTop: 2 },
   equipmentItemLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  partsSummary: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+  partsSummary: { marginTop: 4 },
   partsSummaryText: { fontSize: 9, color: '#666' },
-  updateSmallBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1976d2', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 5, gap: 5 },
+  updateSmallBtn: { backgroundColor: '#1976d2', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 5 },
   updateSmallBtnText: { color: '#fff', fontSize: 9, fontWeight: '500' },
-  completedBadgeSmall: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#FFEBEE', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
+  completedBadgeSmall: { backgroundColor: '#FFEBEE', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4 },
   completedBadgeSmallText: { fontSize: 9, color: '#EF4444', fontWeight: '500' },
   
-  footerLocked: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 8, paddingTop: 6, borderTopWidth: 1, borderTopColor: '#f0f0f0', gap: 5 },
+  footerLocked: { alignItems: 'center', marginTop: 8, paddingTop: 6, borderTopWidth: 1, borderTopColor: '#f0f0f0' },
   footerLockedText: { fontSize: 9, color: '#bbb' },
-  viewDetailsBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginTop: 8, paddingTop: 6, borderTopWidth: 1, borderTopColor: '#f0f0f0', gap: 5 },
+  viewDetailsBtn: { alignItems: 'flex-end', marginTop: 8, paddingTop: 6, borderTopWidth: 1, borderTopColor: '#f0f0f0' },
   viewDetailsBtnText: { fontSize: 10, color: '#1976d2', fontWeight: '500' },
   
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
@@ -1313,25 +1338,25 @@ const styles = StyleSheet.create({
   modalCloseBtn: { marginTop: 20, backgroundColor: '#1976d2', padding: 14, borderRadius: 12, alignItems: 'center' },
   modalCloseBtnText: { color: '#fff', fontWeight: '600', fontSize: 15 },
   
-  updateContainer: { flex: 1, backgroundColor: '#f8f9fa' },
-  updateHeader: { backgroundColor: '#fff', paddingTop: 48, paddingBottom: 16, paddingHorizontal: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#e0e0e0' },
+  updateContainer: { flex: 1, backgroundColor: '#f5f7fa' },
+  updateHeader: { backgroundColor: '#1976d2', paddingTop: 48, paddingBottom: 16, paddingHorizontal: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomLeftRadius: 16, borderBottomRightRadius: 16 },
   updateBackBtn: { padding: 4 },
-  updateHeaderTitle: { fontSize: 18, fontWeight: 'bold', color: '#333' },
+  updateHeaderTitle: { fontSize: 18, fontWeight: 'bold', color: '#fff' },
   headerPlaceholder: { width: 32 },
-  updateContent: { flex: 1, padding: 16 },
-  updateInfoCard: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: '#e0e0e0' },
+  updateContent: { flex: 1, padding: 12 },
+  updateInfoCard: { backgroundColor: '#fff', borderRadius: 10, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: '#e5eaf0', elevation: 1 },
   updateInfoRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 12 },
   updateInfoLabel: { fontSize: 10, color: '#666', marginBottom: 2, textTransform: 'uppercase' },
   updateInfoValue: { fontSize: 14, fontWeight: '500', color: '#333' },
   updateInfoSub: { fontSize: 11, color: '#666', marginTop: 2 },
-  updateSection: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: '#e0e0e0' },
-  updateSectionTitle: { fontSize: 14, fontWeight: '600', color: '#333', marginBottom: 12 },
-  professionalDropdown: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f8f9fa', paddingHorizontal: 14, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: '#e0e0e0' },
+  updateSection: { backgroundColor: '#fff', borderRadius: 10, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: '#e5eaf0', elevation: 1 },
+  updateSectionTitle: { fontSize: 14, fontWeight: '600', color: '#1a237e', marginBottom: 12 },
+  professionalDropdown: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f8fafc', paddingHorizontal: 12, paddingVertical: 11, borderRadius: 8, borderWidth: 1, borderColor: '#e5eaf0' },
   professionalDropdownText: { fontSize: 14, color: '#333', flex: 1 },
   placeholderText: { color: '#999' },
-  professionalDropdownList: { marginTop: 8, backgroundColor: '#fff', borderRadius: 10, borderWidth: 1, borderColor: '#e0e0e0', overflow: 'hidden', zIndex: 1000 },
-  professionalDropdownItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
-  professionalDropdownItemSelected: { backgroundColor: '#e8f0fe' },
+  professionalDropdownList: { marginTop: 8, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#e5eaf0', overflow: 'hidden', zIndex: 1000 },
+  professionalDropdownItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#edf1f5' },
+  professionalDropdownItemSelected: { backgroundColor: '#E6F4F1' },
   dropdownItemTitle: { fontSize: 14, fontWeight: '500', color: '#333' },
   dropdownItemSubtitle: { fontSize: 12, color: '#666', marginTop: 2 },
   dropdownEmptyItem: { padding: 20, alignItems: 'center' },
@@ -1343,25 +1368,25 @@ const styles = StyleSheet.create({
   quantityLabel: { fontSize: 13, color: '#666', fontWeight: '500' },
   quantityButtons: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   quantityValue: { fontSize: 16, fontWeight: '600', color: '#333', minWidth: 30, textAlign: 'center' },
-  addPartButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#2e7d32', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, gap: 6 },
+  addPartButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1976d2', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, gap: 6 },
   addPartButtonText: { color: '#fff', fontSize: 13, fontWeight: '500' },
-  selectedPartCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f8f9fa', padding: 12, borderRadius: 10, marginBottom: 8 },
+  selectedPartCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff', padding: 10, borderRadius: 8, marginBottom: 8, borderWidth: 1, borderColor: '#e5eaf0' },
   selectedPartName: { fontSize: 14, fontWeight: '500', color: '#333' },
   selectedPartPrice: { fontSize: 11, color: '#666', marginTop: 2 },
   selectedPartActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   selectedPartQty: { fontSize: 15, fontWeight: '600', color: '#333', minWidth: 25, textAlign: 'center' },
   totalAmountContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#e0e0e0' },
   totalAmountLabel: { fontSize: 14, fontWeight: '600', color: '#666' },
-  totalAmountValue: { fontSize: 18, fontWeight: 'bold', color: '#2e7d32' },
-  remarksInput: { backgroundColor: '#f8f9fa', borderRadius: 10, padding: 12, minHeight: 80, fontSize: 13, color: '#333', borderWidth: 1, borderColor: '#e0e0e0', textAlignVertical: 'top' },
-  fileButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#e8f0fe', padding: 14, borderRadius: 10, gap: 10 },
+  totalAmountValue: { fontSize: 18, fontWeight: 'bold', color: '#0F766E' },
+  remarksInput: { backgroundColor: '#f8fafc', borderRadius: 8, padding: 12, minHeight: 80, fontSize: 13, color: '#333', borderWidth: 1, borderColor: '#e5eaf0', textAlignVertical: 'top' },
+  fileButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#eef4fa', padding: 12, borderRadius: 8, gap: 10 },
   fileButtonText: { fontSize: 13, color: '#1976d2', flex: 1 },
   fileInfo: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
   fileSize: { fontSize: 11, color: '#888' },
   removeFileBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   removeFileText: { fontSize: 11, color: '#d32f2f' },
-  bottomButtonContainer: { padding: 16, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#e0e0e0' },
-  completeBtn: { backgroundColor: '#2e7d32', paddingVertical: 14, borderRadius: 10, alignItems: 'center' },
+  bottomButtonContainer: { padding: 12, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#e5eaf0' },
+  completeBtn: { backgroundColor: '#1976d2', paddingVertical: 13, borderRadius: 8, alignItems: 'center' },
   completeBtnDisabled: { opacity: 0.6 },
   completeBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 }
 });

@@ -7,7 +7,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import LoginScreen from "./screens/LoginScreen";
 import EmployeeDashboard from "./screens/EmployeeDashboard";
 import PlantsScreen from "./screens/PlantsScreen";
-import DashboardScreen from "./screens/DashboardScreen";
 import ProfileScreen from "./screens/ProfileScreen";
 import AppHeader from "./components/AppHeader";
 
@@ -26,7 +25,7 @@ const ProfileNavigationHeader = ({ onBack }) => {
         style={styles.profilePageBackButton}
         onPress={onBack}
         accessibilityRole="button"
-        accessibilityLabel="Back to dashboard"
+        accessibilityLabel="Back to previous screen"
       >
         <Ionicons name="arrow-back" size={22} color="#ffffff" />
       </TouchableOpacity>
@@ -119,7 +118,6 @@ export default function App() {
   // Employee navigation functions
   const switchToServicesTab = () => setActiveTab('services');
   const switchToPlantsTab = () => setActiveTab('plants');
-  const switchToDashboardTab = () => setActiveTab('dashboard');
 
   // Admin navigation functions
   const goToAdminServices = () => setAdminTab('services');
@@ -300,14 +298,6 @@ export default function App() {
               {activeTab === 'plants' && (
                 <PlantsScreen user={user} onBackToServices={switchToServicesTab} hideHeader={true} />
               )}
-              {activeTab === 'dashboard' && (
-                <DashboardScreen
-                  user={user}
-                  onBackToServices={switchToServicesTab}
-                  onLogout={handleLogout}
-                  hideHeader={true}
-                />
-              )}
             </>
           )}
         </View>
@@ -346,21 +336,6 @@ export default function App() {
             {activeTab === 'plants' && <View style={styles.activeIndicator} />}
           </TouchableOpacity>
           
-          <TouchableOpacity 
-            style={styles.navItem}
-            onPress={switchToDashboardTab}
-            activeOpacity={0.7}
-          >
-            <Ionicons 
-              name={activeTab === 'dashboard' ? 'pie-chart' : 'pie-chart-outline'} 
-              size={24} 
-              color={activeTab === 'dashboard' ? '#1976d2' : '#9e9e9e'} 
-            />
-            <Text style={[styles.navLabel, activeTab === 'dashboard' && styles.navLabelActive]}>
-              Dashboard
-            </Text>
-            {activeTab === 'dashboard' && <View style={styles.activeIndicator} />}
-          </TouchableOpacity>
         </View>
 
         {/* Custom Logout Modal */}
